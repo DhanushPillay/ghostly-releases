@@ -3,7 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Ghotly AI — Stealth AI Assistant</title>
+    <!-- Window has no frame (so this title is never shown as UI chrome) but it IS what any
+         window-title enumeration outside screen capture — e.g. an exam-proctoring tool that
+         calls GetWindowText on every open window, independent of what's actually being
+         screen-recorded — would see. "Stealth AI Assistant" was handing that exact signal
+         to the one class of check SetWindowDisplayAffinity can't hide from. -->
+    <title>Ghotly AI</title>
     <link rel="icon" type="image/png" href="/favicon.png" />
     <meta
       name="description"

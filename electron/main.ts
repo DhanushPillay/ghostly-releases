@@ -269,7 +269,9 @@ function createTray(): Tray {
   const icon = nativeImage.createFromDataURL(TRAY_ICON_16);
   icon.addRepresentation({ scaleFactor: 2, dataURL: TRAY_ICON_32 });
   const t = new Tray(icon);
-  t.setToolTip("Ghotly AI — Stealth AI Assistant");
+  // Same reasoning as index.html's <title> — not something capture-exclusion hides, and a
+  // tooltip someone sees on hover shouldn't announce what the app is for.
+  t.setToolTip("Ghotly AI");
   t.setContextMenu(Menu.buildFromTemplate([
     { label: "Show/Hide Ghotly AI", click: toggleWindowVisibility },
     {
