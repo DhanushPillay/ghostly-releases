@@ -245,11 +245,14 @@ function toggleWindowVisibility() {
   const isCurrentlyHidden = mainWindow.getOpacity() === 0 || !mainWindow.isVisible();
   if (isCurrentlyHidden) {
     mainWindow.setOpacity(1);
-    mainWindow.show();
+    // showInactive(), not show() + focus() — see hotkeys.ts's toggleVisibility
+    // for why: this window never needs OS focus to work, and stealing it from
+    // a fullscreen interview/assessment tab is what trips proctoring platforms'
+    // "tab switched" detection.
+    mainWindow.showInactive();
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.setAlwaysOnTop(true, "screen-saver");
     mainWindow.setIgnoreMouseEvents(false);
-    mainWindow.focus();
     mainWindow.webContents.send("ghostly:show");
     // The 0 -> 1 opacity jump can leave Windows' DWM holding a stale (blank)
     // composited frame for this window — same class of bug as the stealth-mode
@@ -406,10 +409,10 @@ if (!gotTheLock) {
     ipcMain.on("ghostly:show", () => {
       if (mainWindow) {
         mainWindow.setOpacity(1);
-        mainWindow.show();
+        // showInactive(), not show() + focus() — see hotkeys.ts's toggleVisibility.
+        mainWindow.showInactive();
         mainWindow.setAlwaysOnTop(true, "screen-saver");
         mainWindow.setIgnoreMouseEvents(false);
-        mainWindow.focus();
         safeguardVisibility(mainWindow);
         setTimeout(() => {
           if (mainWindow) {
@@ -460,7 +463,15 @@ if (!gotTheLock) {
     });
 
     ipcMain.on("ghostly:download-update", () => autoUpdater.downloadUpdate());
-    ipcMain.on("ghostly:install-update", () => autoUpdater.quitAndInstall());
+    // quitAndInstall() with no args runs with isSilent=false — electron-updater's own
+    // docs say isForceRunAfter is IGNORED in that mode, so whether the app relaunches
+    // after installing was left entirely to the NSIS installer's own default UI flow
+    // (not guaranteed, and a second native installer window popping up after the app's
+    // own "Installing Update" animation above was confusing either way). A user who
+    // updates then immediately tries the browser login hits "desktop app not detected"
+    // with no way to recover short of noticing the app never reopened and launching it
+    // by hand. isSilent=true actually honors isForceRunAfter, guaranteeing a relaunch.
+    ipcMain.on("ghostly:install-update", () => autoUpdater.quitAndInstall(true, true));
     ipcMain.on("ghostly:check-update", () => {
       if (app.isPackaged) {
         autoUpdater.checkForUpdates();

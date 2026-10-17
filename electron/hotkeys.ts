@@ -55,7 +55,9 @@ function buildActionHandlers(win: BrowserWindow): Record<ShortcutAction, () => v
       if (wasVisible) {
         win.setOpacity(1);
         win.setIgnoreMouseEvents(true, { forward: true });
-        win.focus();
+        // No win.focus() here — see toggleVisibility below for why. Stealing OS
+        // focus from a fullscreen browser tab mid-capture is exactly what makes
+        // assessment platforms like HackerEarth flag a "tab switched" violation.
         safeguardVisibility(win);
       }
       win.webContents.send("ghostly:screenshot", base64);
@@ -69,7 +71,6 @@ function buildActionHandlers(win: BrowserWindow): Record<ShortcutAction, () => v
       if (wasVisible) {
         win.setOpacity(1);
         win.setIgnoreMouseEvents(true, { forward: true });
-        win.focus();
         safeguardVisibility(win);
       }
       // This used to only log to the terminal — a packaged app's user never
@@ -84,11 +85,22 @@ function buildActionHandlers(win: BrowserWindow): Record<ShortcutAction, () => v
     const isCurrentlyHidden = win.getOpacity() === 0 || !win.isVisible();
     if (isCurrentlyHidden) {
       win.setOpacity(1);
-      win.show();
+      // showInactive(), not show() + focus(): every shortcut here is a global
+      // one that works regardless of OS focus (see the comment at the top of
+      // this file) specifically so the user never has to click into — or give
+      // OS focus to — this window during a real interview. show() + focus()
+      // stole focus from whatever WAS focused (often a fullscreen browser tab
+      // running the actual interview/assessment), which several proctoring
+      // platforms (e.g. HackerEarth) detect as a "tab switched" violation and
+      // forcibly exit fullscreen over — happening even when, on top of that,
+      // this window failed to actually render above an exclusive-fullscreen
+      // app, so the user saw a violation warning for a window they couldn't
+      // even see. Mouse clicks on the window still focus it normally; nothing
+      // here needs keyboard focus to work.
+      win.showInactive();
       if (win.isMinimized()) win.restore();
       win.setAlwaysOnTop(true, "screen-saver");
       win.setIgnoreMouseEvents(false);
-      win.focus();
       win.webContents.send("ghostly:show");
       safeguardVisibility(win);
     } else {
@@ -103,7 +115,7 @@ function buildActionHandlers(win: BrowserWindow): Record<ShortcutAction, () => v
       win.setIgnoreMouseEvents(true, { forward: true });
       safeguardVisibility(win);
     }
-    win.focus();
+    // No win.focus() — see toggleVisibility above.
     win.webContents.send("ghostly:solve");
   };
 

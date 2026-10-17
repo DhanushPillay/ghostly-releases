@@ -2,13 +2,18 @@ import type { AIProvider, AIRequestOptions } from "./types";
 import { rateLimitError, extractApiErrorMessage } from "./types";
 
 export const NVIDIA_MODELS = [
-  // Top 3 Best Free Models — IDs verified against NVIDIA's current NIM catalog.
-  // The previous IDs here were incomplete/stale (missing size suffix on the
-  // Nemotron model, missing the "-instruct-v0.1" suffix on Mixtral) and were
-  // 404ing on every call.
-  { id: "nvidia/llama-3.3-nemotron-super-49b-v1.5", name: "Llama 3.3 Nemotron Super 49B v1.5" },
-  { id: "meta/llama-3.3-70b-instruct", name: "Llama 3.3 70B Instruct" },
-  { id: "mistralai/mixtral-8x7b-instruct-v0.1", name: "Mixtral 8x7B Instruct" },
+  // All 3 of this list's previous IDs had reached end of life and were pulled from
+  // NVIDIA's catalog entirely: nemotron-super-49b-v1.5 and llama-3.3-70b-instruct both
+  // EOL'd 2026-08-26, mixtral-8x7b-instruct-v0.1 EOL'd 2026-07-27 — confirmed directly
+  // against the live endpoint (POST .../v1/chat/completions returns HTTP 410 "has
+  // reached its end of life" for each), not just the catalog's product pages, since
+  // those kept showing the old IDs as if nothing had changed. Every NVIDIA call had
+  // been failing for every user since the first of those EOL dates. Replaced with 3
+  // IDs individually confirmed live the same way (a bad key gets HTTP 403 "Authorization
+  // failed", not 410/404 — proof the model itself resolves) as of 2026-10-17.
+  { id: "nvidia/llama-3.1-nemotron-70b-instruct", name: "Llama 3.1 Nemotron 70B Instruct" },
+  { id: "mistralai/mixtral-8x22b-v0.1", name: "Mixtral 8x22B" },
+  { id: "deepseek-ai/deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash" },
 ];
 
 export class NvidiaProvider implements AIProvider {

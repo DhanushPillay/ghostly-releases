@@ -4,7 +4,7 @@ import { useStore } from "./store/useStore";
 import { HomePage } from "./pages/HomePage";
 import { LoginPage } from "./pages/LoginPage";
 import { InterviewSetupPage } from "./pages/InterviewSetupPage";
-import { ApiSetupPage } from "./pages/ApiSetupPage";
+import { ApiSetupPage, AI_PROVIDERS } from "./pages/ApiSetupPage";
 import { AudioSetupPage } from "./pages/AudioSetupPage";
 import { Home } from "./pages/Home";
 import { UpdateAnimation } from "./components/UpdateAnimation";
@@ -111,6 +111,16 @@ const App: React.FC = () => {
             },
             deepgramApiKey: savedSettings.deepgramApiKey ?? import.meta.env.VITE_DEEPGRAM_API_KEY ?? "",
           };
+          // A provider can retire a model after a user already saved it as their active choice
+          // (e.g. NVIDIA's mixtral-8x7b-instruct-v0.1 was pulled from their catalog entirely) —
+          // every call then fails with that provider's own "model not found / end of life" error,
+          // with no in-app way to notice short of reopening Settings and reselecting one by hand.
+          // Falls back to that provider's current first-listed model, same safe default already
+          // used when ApiSetupPage/HomeSettingsPanel can't find the saved model in the live list.
+          const activeProviderCfg = AI_PROVIDERS.find((p) => p.id === merged.activeProvider);
+          if (activeProviderCfg && !activeProviderCfg.models.includes(merged.activeModel)) {
+            merged.activeModel = activeProviderCfg.models[0];
+          }
           setSettings(merged);
           window.ghostly.setOpacity(1);
         }
