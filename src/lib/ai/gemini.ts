@@ -17,14 +17,17 @@ export class GeminiProvider implements AIProvider {
   name = "gemini";
 
   listModels(): string[] {
-    // Verified live against a current "AQ."-format Auth Key (the format
-    // Google AI Studio now issues by default): gemini-2.5-flash/2.5-pro/
-    // 2.0-flash/2.5-flash-lite all 404 ("no longer available to new users")
-    // for this key type — they were quietly killing "Invalid API key"
-    // reports for users with perfectly valid new keys.
+    // gemini-3.5-flash and gemini-pro-latest were never real model IDs on Google's
+    // current catalog (checked against ai.google.dev/gemini-api/docs/models on
+    // 2026-10-17 — neither appears anywhere on the page, under any generation).
+    // Only gemini-3.1-flash-lite (also in this list) was actually real and live.
+    // Replaced with gemini-3.6-flash and gemini-3.8-flash, both confirmed present
+    // on that same page AND confirmed free-tier (ai.google.dev/gemini-api/docs/
+    // pricing lists "Free of charge" for both, unlike e.g. gemini-3.1-pro-preview
+    // which is paid-only) — matching this app's "FREE" badge on every option here.
     return [
-      "gemini-3.5-flash",
-      "gemini-pro-latest",
+      "gemini-3.6-flash",
+      "gemini-3.8-flash",
       "gemini-3.1-flash-lite",
     ];
   }

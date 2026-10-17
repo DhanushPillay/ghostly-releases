@@ -1,13 +1,34 @@
 import type { AIProvider, AIRequestOptions } from "./types";
 import { rateLimitError } from "./types";
 
+// Re-checked against OpenRouter's own live catalog (openrouter.ai/api/v1/models, which
+// needs no key to list) on 2026-10-17: 2 of the previous 6 entries here
+// (nvidia/nemotron-nano-12b-v2-vl:free, nvidia/llama-nemotron-embed-vl-1b-v2:free — the
+// second was an embedding model, not even a chat model) no longer exist on OpenRouter at
+// all. The "16 FREE" badge on this provider in ApiSetupPage.tsx was also stale leftover
+// text from before this list got trimmed down to 6 — OpenRouter genuinely has 16 free
+// models live right now, so restored the full set instead of just patching the 2 dead
+// ones, with one deliberate exception: nvidia/nemotron-3.5-content-safety:free is a
+// moderation/classifier model, not a conversational one, and would have been a second
+// instance of the exact "wrong kind of model in a chat-answer picker" mistake the dead
+// embedding model above already was. 15 real chat/vision models + Auto.
 export const OPENROUTER_FREE_MODELS = [
   { id: "openrouter/auto", name: "Auto (Best Free)", desc: "Automatically selects best free model" },
   { id: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", name: "Nemotron 3 Nano Omni 30B", desc: "Reasoning model by NVIDIA" },
+  { id: "nvidia/nemotron-3-super-120b-a12b:free", name: "Nemotron 3 Super 120B", desc: "Large general model by NVIDIA" },
+  { id: "nvidia/nemotron-3-ultra-550b-a55b:free", name: "Nemotron 3 Ultra 550B", desc: "NVIDIA's largest model, 1M context" },
+  { id: "nvidia/nemotron-3.5-lightning:free", name: "Nemotron 3.5 Lightning", desc: "Fast general model by NVIDIA, 1M context" },
+  { id: "nvidia/nemotron-3.5-super-vl:free", name: "Nemotron 3.5 Super VL", desc: "Vision-capable model by NVIDIA, 1M context" },
   { id: "google/gemma-4-31b-it:free", name: "Gemma 4 31B IT", desc: "Large instruction model by Google" },
-  { id: "nvidia/nemotron-nano-12b-v2-vl:free", name: "Nemotron Nano 12B V2 VL", desc: "Vision-language model by NVIDIA" },
-  { id: "nvidia/llama-nemotron-embed-vl-1b-v2:free", name: "Llama Nemotron Embed VL 1B V2", desc: "Compact vision-language model by NVIDIA" },
   { id: "google/gemma-4-26b-a4b-it:free", name: "Gemma 4 26B A4B IT", desc: "Fast instruction model by Google" },
+  { id: "cohere/north-mini-code:free", name: "North Mini Code", desc: "Code-focused model by Cohere" },
+  { id: "dots-studio/dots-3-note-preview:free", name: "Dots3 Note Preview", desc: "512K context model by Dots Studio" },
+  { id: "liquid/lfm-2.5-2.6b:free", name: "LFM2.5 2.6B", desc: "Compact fast model by Liquid AI" },
+  { id: "poolside/laguna-s-2.1:free", name: "Laguna S 2.1", desc: "General model by Poolside" },
+  { id: "poolside/laguna-xs-2.1:free", name: "Laguna XS 2.1", desc: "Compact fast model by Poolside" },
+  { id: "thinkingmachines/inkling:free", name: "Inkling", desc: "General model by Thinking Machines, 1M context" },
+  { id: "thinkingmachines/inkling-small:free", name: "Inkling Small", desc: "Compact model by Thinking Machines, 1M context" },
+  { id: "xingchen-agi/xing4.0-29b-a4b:free", name: "Xing4.0 29B A4B", desc: "General model by XingChen AGI" },
 ];
 
 export class OpenRouterProvider implements AIProvider {

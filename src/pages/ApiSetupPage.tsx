@@ -40,14 +40,19 @@ export const AI_PROVIDERS: AIProviderConfig[] = [
   {
     id: "gemini", label: "Gemini", icon: "🔵", badge: "FREE", badgeColor: "rgba(59,130,246,0.12)", badgeBorder: "rgba(59,130,246,0.3)", badgeText: "#60a5fa",
     url: "https://aistudio.google.com/app/apikey", ph: "AIza…",
-    // gemini-2.5-flash/2.5-pro/2.0-flash all 404 ("no longer available to
-    // new users") on a current "AQ."-format key — verified live. Only ship
-    // model IDs that actually work for the key format Google issues now.
-    models: ["gemini-3.5-flash", "gemini-pro-latest", "gemini-3.1-flash-lite"],
-    modelLabels: { "gemini-3.5-flash": "Gemini 3.5 Flash — FREE · Fast & smart", "gemini-pro-latest": "Gemini Pro — FREE · Slower, deepest", "gemini-3.1-flash-lite": "Gemini 3.1 Lite — FREE · Fastest (~2s)" },
+    // gemini-3.5-flash and gemini-pro-latest were never real Google model IDs — see
+    // the matching comment in lib/ai/gemini.ts for how that was confirmed and what
+    // replaced them. Keep this list in sync with that file's listModels().
+    models: ["gemini-3.6-flash", "gemini-3.8-flash", "gemini-3.1-flash-lite"],
+    modelLabels: { "gemini-3.6-flash": "Gemini 3.6 Flash — FREE · Fast & smart", "gemini-3.8-flash": "Gemini 3.8 Flash — FREE · Newest, deepest", "gemini-3.1-flash-lite": "Gemini 3.1 Lite — FREE · Fastest (~2s)" },
   },
   {
-    id: "openrouter", label: "OpenRouter", icon: "🔀", badge: "16 FREE", badgeColor: "rgba(34,197,94,0.1)", badgeBorder: "rgba(34,197,94,0.28)", badgeText: "#4ade80",
+    // Was a hardcoded "16 FREE" string that drifted from reality: the real list below
+    // got trimmed from 16 models down to 6 (2 of which had gone dead) at some point
+    // without anyone updating this badge to match. Derived from the real list length
+    // now (minus 1 for "Auto", which isn't itself one of the free models being
+    // counted) so it can't silently go stale like that again.
+    id: "openrouter", label: "OpenRouter", icon: "🔀", badge: `${OPENROUTER_FREE_MODELS.length - 1} FREE`, badgeColor: "rgba(34,197,94,0.1)", badgeBorder: "rgba(34,197,94,0.28)", badgeText: "#4ade80",
     url: "https://openrouter.ai/keys", ph: "sk-or-…",
     models: OPENROUTER_FREE_MODELS.map(m => m.id),
     modelLabels: Object.fromEntries(OPENROUTER_FREE_MODELS.map(m => [m.id, `${m.name} — FREE`])),
@@ -67,8 +72,11 @@ export const AI_PROVIDERS: AIProviderConfig[] = [
   {
     id: "anthropic", label: "Anthropic", icon: "🟠", badge: "PAID", badgeColor: "rgba(217,119,6,0.12)", badgeBorder: "rgba(217,119,6,0.3)", badgeText: "#f59e0b",
     url: "https://console.anthropic.com/settings/keys", ph: "sk-ant-…",
-    models: ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5-20251001", "claude-sonnet-4-5-20250929"],
-    modelLabels: { "claude-sonnet-5": "Claude Sonnet 5 — Balanced", "claude-opus-5": "Claude Opus 5 — Most Capable", "claude-haiku-4-5-20251001": "Claude Haiku 4.5 — Fastest", "claude-sonnet-4-5-20250929": "Claude Sonnet 4.5 — Legacy" },
+    // claude-sonnet-4-5-20250929 is deprecated and retires 2026-11-30 — see the
+    // matching comment in lib/ai/anthropic.ts. Keep this list in sync with that
+    // file's listModels().
+    models: ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5-20251001", "claude-sonnet-5-5"],
+    modelLabels: { "claude-sonnet-5": "Claude Sonnet 5 — Balanced", "claude-opus-5": "Claude Opus 5 — Most Capable", "claude-haiku-4-5-20251001": "Claude Haiku 4.5 — Fastest", "claude-sonnet-5-5": "Claude Sonnet 5.5 — Newest" },
   },
   {
     id: "grok", label: "Grok (xAI)", icon: "⬛", badge: "PAID", badgeColor: "rgba(255,255,255,0.1)", badgeBorder: "rgba(255,255,255,0.25)", badgeText: "#e5e7eb",

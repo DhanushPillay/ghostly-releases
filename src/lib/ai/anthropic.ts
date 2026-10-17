@@ -5,11 +5,18 @@ export class AnthropicProvider implements AIProvider {
   name = "anthropic";
 
   listModels(): string[] {
+    // claude-sonnet-4-5-20250929 is deprecated (as of 2026-09-30) and fully retires
+    // 2026-11-30 (platform.claude.com/docs/en/about-claude/model-deprecations) — it
+    // still works today but would silently stop in a few weeks, the same way NVIDIA's
+    // models died with nobody noticing until users started filing tickets. Replaced
+    // with claude-sonnet-5-5, Anthropic's own listed replacement for it and the
+    // current flagship Sonnet. The other three below are all confirmed Active with no
+    // retirement date set.
     return [
       "claude-sonnet-5",
       "claude-opus-5",
       "claude-haiku-4-5-20251001",
-      "claude-sonnet-4-5-20250929",
+      "claude-sonnet-5-5",
     ];
   }
 
