@@ -17,6 +17,12 @@ export interface ChatMessage {
 // to a third.
 const DEEPGRAM_SAMPLE_RATE = 16000;
 
+// Pre-gain applied to the raw system-audio loopback. This was a fixed 2.6
+// (+8 dB), which hard-clips already-loud system output — clipped audio is the
+// most likely cause of "the transcript is garbled". A mild lift still rescues
+// quiet system audio, and the compressor downstream catches any overshoot.
+const SYSTEM_AUDIO_GAIN = 1.4;
+
 const rawChunkerCode = `
 const OUT_RATE = ${DEEPGRAM_SAMPLE_RATE};
 
@@ -137,11 +143,6 @@ export function useInterviewAudio() {
     (s) => s.settings.deepgramApiKey ?? import.meta.env.VITE_DEEPGRAM_API_KEY ?? ""
   );
   const deepgramLanguage = useStore((s) => s.settings.deepgramLanguage ?? "");
-  // System-audio pre-gain. Clamped here as well as in the store so a bad value
-  // (hand-edited settings, older saved config) can't blow the graph up.
-  const audioGain = useStore((s) =>
-    Math.min(3, Math.max(0.5, Number(s.settings.audioGain) || 1.4))
-  );
 
   // connectWebSocket (and therefore every reconnect it schedules) closes over
   // the key/language from the render that started the session, so changing the
@@ -443,10 +444,8 @@ export function useInterviewAudio() {
       const voiceBoost = audioCtx.createGain();
       // Was a fixed 2.6 (+8 dB) applied to the raw loopback. On an already-loud
       // system output that hard-clips, and clipped audio is the most likely
-      // cause of "the transcript is garbled". Default is a mild +3 dB lift that
-      // still rescues quiet system audio without squaring off peaks; the
-      // compressor below catches whatever still overshoots.
-      voiceBoost.gain.value = audioGain;
+      // cause of "the transcript is garbled". See SYSTEM_AUDIO_GAIN above.
+      voiceBoost.gain.value = SYSTEM_AUDIO_GAIN;
       const compressor = audioCtx.createDynamicsCompressor();
       compressor.threshold.value = -42;
       compressor.knee.value = 28;
