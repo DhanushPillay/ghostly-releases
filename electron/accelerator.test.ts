@@ -7,7 +7,7 @@
 // take down every registered shortcut, or abort app startup.
 // CommonJS require (not import) so `node` can resolve ./accelerator.ts without
 // needing an import extension that the project's tsc config rejects.
-const assert = require("node:assert/strict") as typeof import("node:assert/strict");
+const assert: typeof import("node:assert/strict") = require("node:assert/strict");
 const { isValidAccelerator } = require("./accelerator.ts") as typeof import("./accelerator");
 
 const REJECTED = [
