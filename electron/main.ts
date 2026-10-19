@@ -1,10 +1,12 @@
-import { app, BrowserWindow, Tray, Menu, nativeImage, screen, ipcMain, desktopCapturer, shell, protocol } from "electron";
+import { app, BrowserWindow, Tray, Menu, nativeImage, screen, ipcMain, desktopCapturer, shell, protocol, dialog, powerMonitor, net } from "electron";
 import { TRAY_ICON_16, TRAY_ICON_32 } from "./trayIcon";
 import path from "path";
 import http from "http";
+import { pathToFileURL } from "url";
 import { autoUpdater } from "electron-updater";
+import log from "electron-log";
 import { registerHotkeys, unregisterHotkeys, type ShortcutAction } from "./hotkeys";
-import { registerIpcHandlers, getStoredShortcuts } from "./ipc";
+import { registerIpcHandlers, getStoredShortcuts, assertTrustedSender } from "./ipc";
 import { applyStealthMode, removeStealthMode, safeguardVisibility } from "./stealth";
 import { captureFullScreen } from "./capture";
 
