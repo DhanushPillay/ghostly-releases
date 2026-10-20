@@ -420,12 +420,18 @@ async function docxSideText(buf: ArrayBuffer, bodyText: string): Promise<{ head:
   try {
     const JSZip = (await import("jszip")).default;
     const zip = await JSZip.loadAsync(buf);
-    const bodyNorm = norm(bodyText);
+    // Compare against body LINES, not the whole body string. A short header such
+    // as the candidate's name or "CV" is a substring of plenty of body text, so
+    // substring matching silently dropped it — the exact case this function
+    // exists to recover.
+    const bodyLines = new Set(
+      bodyText.split("\n").map((l) => norm(l.replace(/\s+/g, " ").trim())).filter(Boolean),
+    );
     const seen = new Set<string>();
     const consider = (line: string, into: string[]) => {
       const t = line.replace(/\s+/g, " ").trim();
       const key = norm(t);
-      if (!t || seen.has(key) || PAGE_NUMBER_LINE.test(t) || bodyNorm.includes(key)) return;
+      if (!t || seen.has(key) || PAGE_NUMBER_LINE.test(t) || bodyLines.has(key)) return;
       seen.add(key);
       into.push(t);
     };
@@ -586,7 +592,7 @@ export async function extractResume(file: File, opts: { signal?: AbortSignal } =
     return { kind: "text", text: capped.text, source: "txt", truncated: capped.truncated };
   }
   const mime = sniffed.type === "png" ? "image/png" : sniffed.type === "jpeg" ? "image/jpeg" : "image/webp";
-  const pages = await imageBlobToJpegPages(new Blob([buf], { type: mime }));
+  const pages = await imageBlobToJpegPages(buf, mime);
   throwIfAborted(signal);
   return { kind: "images", pages, source: "image", totalPages: pages.length };
 }
