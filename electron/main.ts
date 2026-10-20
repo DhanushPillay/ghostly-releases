@@ -200,6 +200,17 @@ function handleAuthRequest(req: http.IncomingMessage, res: http.ServerResponse):
     return;
   }
 
+  // CORS only hides the response; it does not stop the request from running.
+  // A cross-origin POST with a simple content type skips the preflight above and
+  // would still set pendingAuthToken, so reject any browser-sent Origin that is
+  // not the product's own site. Requests with no Origin (the website's
+  // server-side callback) are unaffected.
+  if (origin && !ALLOWED_AUTH_ORIGIN.test(origin)) {
+    res.writeHead(403);
+    res.end();
+    return;
+  }
+
   if (req.method !== "POST" || req.url !== "/auth") {
     res.writeHead(404, cors);
     res.end();

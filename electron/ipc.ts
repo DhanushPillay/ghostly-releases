@@ -40,11 +40,10 @@ export function getStoredShortcuts(): ShortcutBindings {
 
 // ── Sender validation ──────────────────────────────────────────────────────────
 // Every handler below is reachable from any frame the renderer creates. The
-// support ad is a srcDoc iframe with allow-scripts + allow-same-origin, i.e.
-// same-origin script running inside this window with the privileged preload
-// bridge attached — without this check it could call get-settings (dumps every
-// API key and the user's idToken), save-settings, or nvidia-api-call (an open,
-// authenticated proxy to a paid API) on the user's dime.
+// support ad is a srcDoc iframe that runs remote script with this window's
+// privileged preload bridge attached — without this check it could call
+// get-settings (dumps every API key and the user's idToken), save-settings, or
+// nvidia-api-call (an open, authenticated proxy to a paid API) on the user's dime.
 const DEV_SERVER_URL = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//;
 
 export function assertTrustedSender(event: IpcMainInvokeEvent | IpcMainEvent): void {
