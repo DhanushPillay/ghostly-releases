@@ -163,7 +163,7 @@ const detectPlatform = (): string => {
 
 type UpdateState = "idle" | "checking" | "available" | "downloading" | "installing" | "ready" | "error";
 
-// Mirrors REMAPPABLE_SHORTCUTS' labels in SettingsPanel.tsx — kept as a small
+// Mirrors REMAPPABLE_SHORTCUTS' labels in HomeSettingsPanel.tsx - kept as a small
 // local map here since that file isn't shared with App.tsx.
 const SHORTCUT_LABELS: Record<string, string> = {
   captureAndSolve: "Screenshot (Ctrl+E)",
