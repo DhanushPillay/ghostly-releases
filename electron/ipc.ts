@@ -1,4 +1,4 @@
-import { ipcMain, desktopCapturer, app, BrowserWindow, safeStorage, type IpcMainInvokeEvent } from "electron";
+import { ipcMain, desktopCapturer, app, BrowserWindow, safeStorage, type IpcMainInvokeEvent, type IpcMainEvent } from "electron";
 import { captureFullScreen } from "./capture";
 import { updateHotkeys, DEFAULT_SHORTCUTS, type ShortcutBindings } from "./hotkeys";
 import Store from "electron-store";
@@ -47,7 +47,7 @@ export function getStoredShortcuts(): ShortcutBindings {
 // authenticated proxy to a paid API) on the user's dime.
 const DEV_SERVER_URL = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//;
 
-export function assertTrustedSender(event: IpcMainInvokeEvent): void {
+export function assertTrustedSender(event: IpcMainInvokeEvent | IpcMainEvent): void {
   const win = BrowserWindow.fromWebContents(event.sender);
   const frame = event.senderFrame;
   const url = frame?.url ?? "";
@@ -110,10 +110,15 @@ function decryptField(name: string): string {
   }
 }
 
+/** electron-store types delete() with keyof, but encrypted names are built at runtime. */
+function deleteEncrypted(name: string): void {
+  store.delete(encField(name) as Parameters<typeof store.delete>[0]);
+}
+
 /** Returns false when safeStorage is unavailable, so callers keep plaintext. */
 function encryptField(name: string, value: string): boolean {
   if (!encryptionAvailable()) return false;
-  if (!value) store.delete(encField(name));
+  if (!value) deleteEncrypted(name);
   else store.set(encField(name), safeStorage.encryptString(value).toString("base64"));
   return true;
 }
@@ -241,7 +246,7 @@ export function registerIpcHandlers(clearPendingAuthToken: () => void = () => {}
   handle("logout-user", () => {
     store.set("user", null);
     store.set("ads", []);
-    store.delete(encField("idToken"));
+    deleteEncrypted("idToken");
     // A token buffered by the local auth server before the logout survives in
     // main.ts, and the renderer picks it up on mount, silently signing the user
     // straight back in with the session they just ended.
