@@ -1,12 +1,5 @@
-// Resume file -> something an AI model can read. Runs entirely in the renderer (the file never
-// leaves the device here):
-//   PDF   -> text via pdf.js; if it has (almost) no text layer it is a scan: first pages -> JPEG
-//   DOCX  -> text via mammoth (+ header/footer/text-box text via JSZip, where templates hide the name)
-//   TXT   -> decoded directly (UTF-8 / UTF-16 / Windows-1252)
-//   image -> PNG/JPG/WebP -> downscaled JPEG (white background, so transparent PNGs stay readable)
-//
-// The file type is decided from the file's BYTES, not its name: a text file called ".pdf" still works,
-// a ".docx" that is really a PNG is read as an image, and an .exe renamed to .pdf is rejected.
+// Resume file -> something an AI model can read, entirely in the renderer (the file never leaves the device here).
+// The type is decided from the file's BYTES, not its name: a text file called ".pdf" still works, an .exe renamed to .pdf is rejected.
 import {
   IMAGE_JPEG_QUALITY, IMAGE_LONG_SIDE, MAX_DOCX_ENTRY_BYTES, MAX_DOCX_TOTAL_BYTES, MAX_IMAGE_PAGES,
   MAX_IMAGE_PIXELS, MAX_RESUME_BYTES, MAX_RESUME_CHARS, MAX_TEXT_PAGES, MIN_TEXT_CHARS,
@@ -14,11 +7,9 @@ import {
 import type { ExtractedResume, SourceKind } from "./types";
 import { ResumeError } from "./types";
 
-// A backstop, not the safety mechanism: pdf.js parses on a Web Worker (see loadPdfjs), so a
-// pathological file can no longer freeze the UI - it just gets cut off.
+// A backstop, not the safety mechanism: pdf.js parses on a Web Worker (see loadPdfjs), so a pathological
+// file is cut off instead of freezing the UI.
 const EXTRACT_TIMEOUT_MS = 20000;
-
-// ───────────────────────── errors ─────────────────────────
 
 const cancelled = () => new ResumeError("cancelled", "Cancelled.");
 const mb = (n: number) => (n / (1024 * 1024)).toFixed(1);
@@ -34,8 +25,6 @@ const MSG = {
   badImage: "We couldn't open that image — it looks damaged. Try a fresh PNG, JPG or WebP.",
   noText: "We couldn't find any readable text in that file. If it's a scan, upload it as a PDF or image instead.",
 };
-
-// ───────────────────────── small helpers ─────────────────────────
 
 function throwIfAborted(signal?: AbortSignal) {
   if (signal?.aborted) {
@@ -96,8 +85,6 @@ export function isReadableText(text: string): boolean {
   return junk / nonSpace <= 0.1;
 }
 
-// ───────────────────────── file type from bytes ─────────────────────────
-
 export type Sniffed =
   | { type: "pdf" | "zip" | "png" | "jpeg" | "webp" | "text" }
   | { type: "ole" | "rtf" | "other" };
@@ -123,24 +110,11 @@ export function sniffFileType(head: Uint8Array, fileName: string, mime: string):
   return { type: "other" };
 }
 
-// ───────────────────────── PDF ─────────────────────────
-
 type PdfJs = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
 let pdfjsPromise: Promise<PdfJs> | null = null;
 
-/**
- * pdf.js is loaded lazily (it is ~1.5 MB; only users who upload a resume pay for it).
- *
- * Parsing runs on a REAL Web Worker: a hostile resume (a font bomb, a page with 50k text items)
- * then cannot freeze the renderer thread, which during an interview is the overlay itself.
- *
- * The worker source is inlined as a string (`?raw`) and handed to pdf.js as a Blob URL rather than a
- * file URL: the packaged renderer is loaded from file:// inside app.asar, where `new Worker("file://...")`
- * is refused, while a blob is not. If a worker cannot be constructed at all (an origin that blocks
- * them), pdf.js keeps its in-thread parser: importing the worker module sets globalThis.pdfjsWorker,
- * which is exactly what pdf.js looks for to fall back to. That import must therefore happen only
- * when no worker was attached - globalThis.pdfjsWorker short-circuits the real-worker path.
- */
+// Lazy-loads pdf.js (~1.5 MB). Parsing runs in a real Web Worker from a Blob URL (file:// inside app.asar refuses
+// workers) so a hostile PDF cannot freeze the overlay; the in-thread fallback imports only when no worker is attached.
 async function loadPdfjs(): Promise<PdfJs> {
   if (!pdfjsPromise) {
     pdfjsPromise = (async () => {
@@ -288,14 +262,10 @@ async function extractPdf(buf: ArrayBuffer, signal: AbortSignal): Promise<Extrac
   }
 }
 
-// ───────────────────────── images ─────────────────────────
-
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
-/**
- * Pixel dimensions read from the file header (PNG / JPEG / WebP) - no decoding, no allocation.
- * {0,0} when the header cannot be parsed; the caller then falls back to the decoded bitmap's own size.
- */
+/** Pixel dimensions read from the file header (PNG / JPEG / WebP) - no decoding, no allocation. {0,0} when the header
+ * cannot be parsed; the caller then falls back to the decoded bitmap's own size. */
 export function readImageSize(bytes: Uint8Array): { width: number; height: number } {
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const u16 = (o: number) => dv.getUint16(o, false);
@@ -337,9 +307,8 @@ export function readImageSize(bytes: Uint8Array): { width: number; height: numbe
 }
 
 async function imageBlobToJpegPages(buf: ArrayBuffer, mime: string): Promise<string[]> {
-  // createImageBitmap decodes the WHOLE image before any of it can be measured, and its resize options
-  // only scale afterwards - a 3 MB PNG can be 100 MP and take the renderer down before the size checks
-  // below ever run. So the pixel count is taken from the file header first.
+  // createImageBitmap decodes the WHOLE image before any of it can be measured, so a 3 MB PNG of 100 MP can take the
+  // renderer down before the checks below run - the pixel count is taken from the file header first.
   const header = readImageSize(new Uint8Array(buf));
   if (header.width * header.height > MAX_IMAGE_PIXELS) {
     throw new ResumeError(
@@ -388,8 +357,6 @@ async function imageBlobToJpegPages(buf: ArrayBuffer, mime: string): Promise<str
   }
 }
 
-// ───────────────────────── DOCX ─────────────────────────
-
 const W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
 const PAGE_NUMBER_LINE = /^(?:page\s*)?\d+(?:\s*(?:of|\/)\s*\d+)?$/i;
@@ -420,10 +387,8 @@ async function docxSideText(buf: ArrayBuffer, bodyText: string): Promise<{ head:
   try {
     const JSZip = (await import("jszip")).default;
     const zip = await JSZip.loadAsync(buf);
-    // Compare against body LINES, not the whole body string. A short header such
-    // as the candidate's name or "CV" is a substring of plenty of body text, so
-    // substring matching silently dropped it — the exact case this function
-    // exists to recover.
+    // Compare against body LINES, not the whole body: a short header such as the candidate's name or "CV" is a
+    // substring of plenty of body text, so substring matching silently dropped it - the exact case this recovers.
     const bodyLines = new Set(
       bodyText.split("\n").map((l) => norm(l.replace(/\s+/g, " ").trim())).filter(Boolean),
     );
@@ -504,9 +469,8 @@ function htmlToText(html: string): string {
   return lines.join("\n");
 }
 
-// Reads only the zip central directory, which records each entry's uncompressed
-// size. A 10 MB .docx can inflate to gigabytes, and both mammoth and JSZip would
-// do it without complaint.
+// Reads only the zip central directory, which records each entry's uncompressed size: a 10 MB .docx can inflate to
+// gigabytes, and both mammoth and JSZip would do it without complaint.
 async function assertZipWithinBudget(buf: ArrayBuffer): Promise<void> {
   const JSZip = (await import("jszip")).default;
   const zip = await JSZip.loadAsync(buf).catch(() => null);
@@ -556,8 +520,6 @@ async function extractDocx(buf: ArrayBuffer, signal: AbortSignal): Promise<Extra
   return { kind: "text", text: capped.text, source: "docx", truncated: capped.truncated };
 }
 
-// ───────────────────────── TXT ─────────────────────────
-
 function decodeText(buf: ArrayBuffer): string {
   let bytes = new Uint8Array(buf);
   if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder("utf-16le").decode(bytes.subarray(2));
@@ -570,12 +532,8 @@ function decodeText(buf: ArrayBuffer): string {
   }
 }
 
-// ───────────────────────── entry point ─────────────────────────
-
-/**
- * Reads a resume file. Throws ResumeError (friendly message, stable `code`) for: empty file, too big,
- * unsupported type, password-protected, damaged, no readable text, timeout, cancelled.
- */
+/** Reads a resume file. Throws ResumeError (friendly message, stable `code`) for: empty file, too big, unsupported
+ * type, password-protected, damaged, no readable text, timeout, cancelled. */
 export async function extractResume(file: File, opts: { signal?: AbortSignal } = {}): Promise<ExtractedResume> {
   const signal = opts.signal
     ? AbortSignal.any([opts.signal, AbortSignal.timeout(EXTRACT_TIMEOUT_MS)])

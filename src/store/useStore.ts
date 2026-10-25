@@ -45,9 +45,8 @@ export interface Solution {
   provider: ProviderName;
   model: string;
   interviewType: string;
-  // No longer populated from a "Code Language" setting (removed — it forced
-  // every user, technical or not, through a programming-language picker).
-  // Left optional for backward compatibility with older saved history entries.
+  // No longer filled from the removed "Code Language" setting; kept optional for backward
+  // compatibility with older saved history entries.
   language?: string;
   // Rich session data
   companyName?: string;
@@ -95,28 +94,20 @@ export interface Settings {
   // Their key stays saved but they're never used — see lib/providerState.ts.
   disabledProviders?: string[];
   deepgramApiKey: string;
-  // Optional Deepgram `language` query param override — left blank by default
-  // (Deepgram's own default, English). Power users on a Deepgram plan that
-  // supports it can type "multi" here for code-switched Hindi/English
-  // ("Hinglish") interviews, or any other Deepgram language code, without
-  // changing the default behavior for everyone else.
+  // Optional Deepgram `language` override (blank = Deepgram's English default); "multi" or another
+  // Deepgram code enables code-switched Hindi/English interviews without changing everyone's default.
   deepgramLanguage?: string;
   customInstructions?: string;
-  // When the active provider hits a real rate-limit/quota (429) — not any
-  // other kind of error — automatically retry the same answer with the next
-  // provider the user has already configured a key for. Defaults on since
-  // this exists specifically to stop quota errors from blocking an answer;
-  // can be turned off in Settings to always stick to the chosen provider.
+  // Retry the same answer with the next configured provider on a real 429/quota error only.
+  // Defaults on; turn off in Settings to always stick to the chosen provider.
   autoSwitchProvider?: boolean;
   micDeviceId?: string;
   transcriptionEngine: "deepgram";
   opacity?: number;
   autoAI?: boolean;
   autoScroll?: boolean;
-  // Opt-in for backing tested API keys up to the signed-in Ghotly AI account
-  // (src/lib/keySync.ts). Off unless the user turns it on: on an app whose whole
-  // pitch is "bring your own key", uploading one without asking is not a default
-  // anyone should get.
+  // Opt-in backup of tested API keys (lib/keySync.ts). Off by default: uploading a key
+  // without asking contradicts the bring-your-own-key promise.
   keySyncEnabled?: boolean;
 }
 
@@ -136,10 +127,8 @@ interface GhostlyStore {
   user: AppUser | null;
   subscription: Subscription;
   ads: Ad[];
-  // A known, real login/account failure (blocked account, server error) —
-  // shared across App.tsx and HomePage.tsx (both can trigger a forced
-  // logout-to-login) so LoginPage can show what actually went wrong instead
-  // of either component falling back to a blocking native alert().
+  // Known login/account failure (blocked account, server error) shared by App.tsx and HomePage.tsx,
+  // so LoginPage can show it instead of falling back to a blocking native alert().
   loginError: string | null;
 
   setAppScreen: (screen: "home" | "login" | "interview-setup" | "api-setup" | "audio-setup" | "interview") => void;
@@ -196,12 +185,8 @@ export const useStore = create<GhostlyStore>((set) => ({
     // llama-3.3-70b-versatile shuts down 08/16/26 (Groq's deprecation schedule)
     activeModel: "openai/gpt-oss-120b",
     apiKeys: {
-      // No build-time VITE_*_API_KEY defaults here, on purpose. Vite inlines those
-      // into the renderer bundle, so a shipped build handed the maintainer's
-      // Gemini/Groq/OpenAI/Anthropic/OpenRouter/Deepgram key to every user who
-      // installed it — and because the merged value looked like the user's own saved
-      // key, pressing "Test" uploaded that build-time key to the backend against a
-      // random end-user account. Keys now only ever come from Settings.
+      // No build-time VITE_*_API_KEY defaults: Vite inlines them into the renderer bundle, leaking
+      // the maintainer's key to every user (and Test would upload it against their account).
       groq: "",
       gemini: "",
       openrouter: "",
@@ -227,9 +212,8 @@ export const useStore = create<GhostlyStore>((set) => ({
   appendToSolution: (chunk) => set((s) => ({ currentSolution: s.currentSolution + chunk })),
   setIsStreaming: (v) => set({ isStreaming: v }),
   setCurrentScreenshot: (b64) => set({ currentScreenshot: b64 }),
-  // Only the newest captures are ever used (runAIStream reads the last one), so
-  // older base64 frames are dropped instead of piling up in memory for the whole
-  // interview — ten 1080p captures is tens of megabytes of dead weight.
+  // Only the newest captures are used (runAIStream reads the last one), so older base64 frames are
+  // dropped instead of keeping tens of MB alive for the whole interview.
   addScreenshot: (b64) => set((s) => ({ screenshots: [...s.screenshots, b64].slice(-MAX_SCREENSHOTS), currentScreenshot: b64 })),
   clearScreenshots: () => set({ screenshots: [], currentScreenshot: null }),
   removeScreenshot: (index) => set((s) => {
@@ -240,9 +224,8 @@ export const useStore = create<GhostlyStore>((set) => ({
   clearSolution: () => set({ currentSolution: "", screenshots: [], currentScreenshot: null, error: null, sessionMessages: [] }),
   setMouseEnabled: (v) => set({ mouseEnabled: v }),
   addSessionMessage: (msg) => set((state) => ({
-    // The transcript is only ever used as prompt context (the last few messages) and
-    // for Q&A pagination, so a bounded window is enough — an unbounded array kept
-    // every base64 screenshot of a long interview alive for the whole session.
+    // Only the last few messages are used as prompt context, so bound the window; an unbounded
+    // array kept every base64 screenshot of a long interview alive for the session.
     sessionMessages: [...state.sessionMessages, msg].slice(-MAX_SESSION_MESSAGES),
   })),
   addToHistory: (s) => set((state) => ({ history: [s, ...state.history].slice(0, 30) })),
@@ -260,11 +243,8 @@ export const useStore = create<GhostlyStore>((set) => ({
   setLoginError: (loginError) => set({ loginError }),
 }));
 
-// ── Settings persistence ──────────────────────────────────────────────────────
-// Nothing in the app remembered to save them: only five call sites ever called
-// window.ghostly.saveSettings by hand, and the interview screen's opacity slider
-// and Auto-AI toggle weren't among them — so both were silently forgotten on every
-// restart. One debounced subscription covers every writer, including future ones.
+// One debounced subscription saves every settings writer; the old hand-called saveSettings missed the
+// interview screen's opacity slider and Auto-AI toggle, so both were forgotten on restart.
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 const flushSettings = () => {
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }

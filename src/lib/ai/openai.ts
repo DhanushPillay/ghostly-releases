@@ -4,11 +4,8 @@ import { modelIds } from "./catalog";
 
 const ENDPOINT = "https://api.openai.com/v1/chat/completions";
 
-// The gpt-5 reasoning family counts hidden reasoning tokens against
-// `max_completion_tokens` (they come out of the same budget as visible text),
-// so passing the renderer's 2048/4096 "answer" budget straight through meant the
-// model could spend all of it thinking and return nothing. The reasoning models
-// get this much extra room; classic chat models don't need it and don't get it.
+// The gpt-5 reasoning family counts hidden reasoning tokens against `max_completion_tokens`,
+// so passing the 2048/4096 answer budget straight through could return nothing; reasoning models get extra room.
 const REASONING_HEADROOM_TOKENS = 2048;
 
 interface OpenAIShape {
@@ -18,9 +15,8 @@ interface OpenAIShape {
   temperature: boolean;
 }
 
-// Learned per model id, so a rejected parameter is probed once per model for the
-// life of the process rather than re-POSTing the request (and, on a screenshot
-// question, the whole base64 image) on every single call.
+// Learned per model id, so a rejected parameter is probed once per model instead of
+// re-POSTing the request (and, on a screenshot question, the whole base64 image) on every call.
 const SHAPE_CACHE = new Map<string, OpenAIShape>();
 
 function isReasoningFamily(model: string): boolean {
@@ -47,16 +43,8 @@ export interface OpenAIRequest {
   signal?: AbortSignal;
 }
 
-/**
- * POSTs a chat completion, correcting itself if the model rejects the request
- * shape. The gpt-5 reasoning family used to reject BOTH `max_tokens` and
- * `temperature: 0.5` with a 400 on every call, so 3 of the 4 models this app
- * offered could not answer anything at all.
- *
- * Shared with ApiSetupPage's "Test Key" button, which had the identical bug: it
- * sent `max_tokens: 1`, so a perfectly valid OpenAI key reported
- * "Invalid Key (HTTP 400)".
- */
+/** POSTs a chat completion, correcting itself if the model rejects the request shape (gpt-5 rejects
+ *  `max_tokens` and non-default temperature). Shared with ApiSetupPage's "Test Key" button. */
 export async function openAiChat(req: OpenAIRequest): Promise<Response> {
   const { model, apiKey, messages, maxTokens = 4096, stream = false } = req;
   const signal = defaultSignal(req.signal);
@@ -74,8 +62,8 @@ export async function openAiChat(req: OpenAIRequest): Promise<Response> {
         ...(shape.tokenKey === "max_completion_tokens"
           ? { max_completion_tokens: maxTokens + REASONING_HEADROOM_TOKENS }
           : { max_tokens: maxTokens }),
-        // Every other provider here sets a low/moderate temperature for focused
-        // answers; this was the only one left at the API's default of 1.0.
+        // Every other provider here sets a low/moderate temperature for focused answers;
+        // this one would otherwise run at the API's default of 1.0.
         ...(shape.temperature ? { temperature: 0.5 } : {}),
         ...(stream ? { stream: true } : {}),
       }),

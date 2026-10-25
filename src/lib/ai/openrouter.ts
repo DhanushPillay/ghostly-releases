@@ -17,14 +17,12 @@ export class OpenRouterProvider implements AIProvider {
 
     const requestedModel = model || defaultModel("openrouter");
     const known = modelIds("openrouter");
-    // "openrouter/auto" is only used as a last resort now: it routes to whatever
-    // OpenRouter judges best, PAID models included, which on a free key is a 402.
+    // "openrouter/auto" is only a last resort: it routes to whatever OpenRouter
+    // judges best, PAID models included, which on a free key is a 402.
     const fallbackModel = known.find((id) => !id.endsWith("/auto")) ?? requestedModel;
     const safeModel = known.includes(requestedModel) ? requestedModel : fallbackModel;
     if (safeModel !== requestedModel) {
-      // Used to substitute silently — a saved model that no longer matches the
-      // catalog (this list has been renamed/replaced between versions once) got
-      // rerouted with zero indication to the user that their selection wasn't used.
+      // Warn instead of substituting silently: a saved model missing from the catalog is rerouted visibly.
       console.warn(`[OpenRouter] "${requestedModel}" isn't in the current model list — using "${safeModel}" instead.`);
     }
 

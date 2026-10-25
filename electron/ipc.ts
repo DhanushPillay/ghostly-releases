@@ -10,8 +10,7 @@ const store = new Store({
   defaults: {
     settings: {
       activeProvider: "gemini",
-      // gemini-2.0-flash 404s ("no longer available") on current "AQ."-
-      // format Auth Keys — this was the default for every brand-new user.
+      // gemini-2.0-flash 404s ("no longer available") on current "AQ."-format Auth Keys.
       activeModel: "gemini-3.5-flash",
       interviewType: "dsa",
       language: "python",
@@ -37,12 +36,8 @@ export function getStoredShortcuts(): ShortcutBindings {
   return { ...DEFAULT_SHORTCUTS, ...(store.get("shortcuts") as Partial<ShortcutBindings> | undefined) };
 }
 
-// ── Sender validation ──────────────────────────────────────────────────────────
-// Every handler below is reachable from any frame the renderer creates. The
-// support ad is a srcDoc iframe that runs remote script with this window's
-// privileged preload bridge attached — without this check it could call
-// get-settings (dumps every API key and the user's idToken), save-settings, or
-// nvidia-api-call (an open, authenticated proxy to a paid API) on the user's dime.
+// Every handler is reachable from any frame the renderer creates: the support ad is a
+// srcDoc iframe with this window's privileged preload, so it could read every API key.
 const DEV_SERVER_URL = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//;
 
 export function assertTrustedSender(event: IpcMainInvokeEvent | IpcMainEvent): void {
@@ -69,13 +64,8 @@ function handle(
   });
 }
 
-// ── Secrets at rest ────────────────────────────────────────────────────────────
-// The store's `encryptionKey` is a literal in this source file, which ships
-// inside app.asar in a public repo — so every user's API keys and idToken were
-// readable by anyone who got hold of the JSON file. safeStorage hands the
-// encryption to the OS keychain instead. Each secret lives in its own `*Enc`
-// field so saving one key can never wipe another, and an existing
-// ghostly-data.json is migrated on first read instead of being reset.
+// The store's encryptionKey is a literal in this public source, so safeStorage (OS
+// keychain) encrypts each secret in its own *Enc field; legacy plaintext is migrated on read.
 const PROVIDER_KEYS = ["gemini", "groq", "openai", "anthropic", "grok", "openrouter", "nvidia", "ollama"];
 // Provider key names are used as object keys below, so keep them boring — this
 // also keeps `__proto__`/`constructor` out of anything we spread.
@@ -102,8 +92,7 @@ function decryptField(name: string): string {
   try {
     return safeStorage.decryptString(Buffer.from(blob, "base64"));
   } catch {
-    // Store moved to another machine/Windows account — the ciphertext is
-    // unreadable now, which is exactly the point, so treat it as unset.
+    // Moved machine/account — ciphertext is unreadable, which is the point; treat as unset.
     return "";
   }
 }
@@ -245,9 +234,8 @@ export function registerIpcHandlers(clearPendingAuthToken: () => void = () => {}
     store.set("user", null);
     store.set("ads", []);
     deleteEncrypted("idToken");
-    // A token buffered by the local auth server before the logout survives in
-    // main.ts, and the renderer picks it up on mount, silently signing the user
-    // straight back in with the session they just ended.
+    // A token buffered by main.ts's local auth server survives logout and would sign
+    // the user straight back in on mount.
     clearPendingAuthToken();
   });
 
@@ -308,13 +296,8 @@ export function registerIpcHandlers(clearPendingAuthToken: () => void = () => {}
     return result;
   });
 
-  // Settings
-  // Model IDs Google has since pulled for the "AQ."-format Auth Keys it now
-  // issues by default — 404s on every call, looked exactly like "Invalid API
-  // key" to users. New installs get the fixed default (see above), but
-  // existing users already have one of these saved in their store, which the
-  // `defaults` block above only applies when no value exists at all — so
-  // migrate it forward here instead.
+  // Model IDs Google pulled for the "AQ."-format Auth Keys: they 404 on every call and
+  // look like "Invalid API key", so migrate a stored one forward on read.
   const DEAD_GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"];
   // Groq shuts these two down 08/16/26 (console.groq.com/docs/deprecations).
   const DEAD_GROQ_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
@@ -343,7 +326,7 @@ export function registerIpcHandlers(clearPendingAuthToken: () => void = () => {}
   });
 
   handle("save-history", (_event, history: any[]) => {
-    // Fix: validate history is an array and cap at 30 items to keep store JSON lightweight
+    // Cap at 30 items to keep the store JSON lightweight.
     if (Array.isArray(history)) {
       store.set("history", history.slice(0, 30));
     }
@@ -399,10 +382,8 @@ export function registerIpcHandlers(clearPendingAuthToken: () => void = () => {}
       req.on("error", (error) => {
         reject(error);
       });
-      // Nothing in this call ever had a timeout — a connection that opens but
-      // never gets a response (dead network, restrictive proxy silently
-      // dropping packets) left the renderer's await hanging forever with no
-      // error, no timeout, and no way to recover except restarting the app.
+      // Without this, a connection that opens but never responds (dead network,
+      // packet-dropping proxy) hangs the renderer's await forever.
       req.setTimeout(30000, () => req.destroy(new Error("NVIDIA request timed out after 30s")));
 
       req.write(postData);

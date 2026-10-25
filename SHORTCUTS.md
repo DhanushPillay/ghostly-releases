@@ -1,6 +1,6 @@
-# ⌨️ Ghostly AI — Keyboard Shortcuts & Hotkeys (v3.5.2)
+# Ghostly AI keyboard shortcuts (v3.5.2)
 
-Run Ghostly AI 100% hands-free and stealthy during a live interview. Every action below is a system-wide hotkey, so it works no matter which window has focus.
+Run Ghostly AI hands-free during a live interview. Every action below is a system-wide hotkey, so it works no matter which window has focus.
 
 | Shortcut | Action | Older alias | Description |
 | :--- | :--- | :--- | :--- |

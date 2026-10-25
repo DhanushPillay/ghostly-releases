@@ -1,12 +1,5 @@
-// Run with:  node electron/accelerator.test.ts        (no test framework, no deps)
-//
-// accelerator.ts is deliberately Electron-free so the parser rules can be
-// checked here instead of by booting the app and pressing keys. The strings
-// below are the ones that used to blow up: anything Electron's converter
-// rejects makes globalShortcut.register() THROW, which used to be able to
-// take down every registered shortcut, or abort app startup.
-// CommonJS require (not import) so `node` can resolve ./accelerator.ts without
-// needing an import extension that the project's tsc config rejects.
+// Run with: node electron/accelerator.test.ts (no test framework, no deps).
+// CommonJS require so `node` resolves ./accelerator.ts without an import extension tsc rejects.
 const assert: typeof import("node:assert/strict") = require("node:assert/strict");
 const { isValidAccelerator } = require("./accelerator.ts") as typeof import("./accelerator");
 

@@ -41,14 +41,13 @@ export const AudioSetupPage: React.FC = () => {
     if (testTimerRef.current !== null) { window.clearTimeout(testTimerRef.current); testTimerRef.current = null; }
     streamRef.current?.getTracks().forEach(t => t.stop());
     streamRef.current = null;
-    // Each Test press used to create an AudioContext that was never closed. Browsers
-    // cap how many can exist, after which the visualizer silently stops working.
+    // Close the AudioContext: browsers cap how many can exist, after which the visualizer silently dies.
     ctxRef.current?.close().catch(() => {});
     ctxRef.current = null;
   };
 
   const handleTest = async () => {
-    if (testingRef.current) return; // the disabled={testing} guard is state-based, so two clicks in one tick both got through
+    if (testingRef.current) return; // ref guard: disabled={testing} is state-based, so two clicks in one tick both get through
     stopStream();
     testingRef.current = true;
     setTesting(true); setTestDone(false); setMicStatus("testing"); setMicError(null);
@@ -77,18 +76,15 @@ export const AudioSetupPage: React.FC = () => {
         animRef.current = requestAnimationFrame(tick);
       };
       animRef.current = requestAnimationFrame(tick);
-      // Tracked so Reset / Back / unmount can cancel it — it used to fire anyway and
-      // flip a torn-down panel to "Signal OK ✓".
+      // Tracked so Reset / Back / unmount can cancel it, so a torn-down panel can't flip to "Signal OK ✓".
       testTimerRef.current = window.setTimeout(() => {
         testTimerRef.current = null;
         testingRef.current = false;
         setMicStatus("ok"); setSysStatus("ok"); setTestDone(true); setTesting(false);
       }, 3000);
     } catch (err) {
-      // Surface *why* it failed instead of a bare "No Signal ✗" — the three DOMException
-      // names below cover the real-world causes users hit: OS-level mic permission off,
-      // no input device at all, or the mic already claimed by another app (Zoom/Teams/
-      // Discord all lock the device while running).
+      // Surface why it failed: these DOMException names cover OS mic permission off, no input
+      // device, or the mic already claimed by another app (Zoom/Teams/Discord lock the device).
       const name = err instanceof DOMException ? err.name : "";
       const message =
         name === "NotAllowedError" || name === "PermissionDeniedError"
@@ -112,8 +108,7 @@ export const AudioSetupPage: React.FC = () => {
   const handleActivate = () => {
     stopStream();
     updateSettings({ micDeviceId: selectedMic });
-    // Persist straight away. This was never saved, so the chosen mic silently
-    // reverted to "Default Microphone" on every restart.
+    // Persist immediately; otherwise the chosen mic silently reverts to "Default Microphone" on restart.
     void window.ghostly.saveSettings(useStore.getState().settings);
     window.ghostly.setOpacity(1);
     window.ghostly.show();
@@ -155,7 +150,6 @@ export const AudioSetupPage: React.FC = () => {
         }}
         onMouseEnter={() => window.ghostly.enableMouse()}
       >
-        {/* ── Header ── */}
         <div className="flex items-center justify-between px-3.5 py-2.5" style={{ WebkitAppRegion: "drag", borderBottom: `1px solid ${BORDER}` } as React.CSSProperties}>
           <div className="flex items-center gap-2">
             <span style={{ fontSize: "15px" }}>🎙️</span>
@@ -181,7 +175,6 @@ export const AudioSetupPage: React.FC = () => {
 
         <div className="px-3.5 pt-3.5 pb-3 flex flex-col gap-3">
 
-          {/* ── Mic Selector ── */}
           <div className="flex flex-col gap-1.5 relative" ref={micDropRef}>
             <label htmlFor="ghostly-mic-select" className="text-[8px] font-black uppercase tracking-[0.12em]" style={{ color: SUBTLE }}>🎤 Microphone</label>
             <button
@@ -242,7 +235,6 @@ export const AudioSetupPage: React.FC = () => {
             </AnimatePresence>
           </div>
 
-          {/* ── Visualizer ── */}
           <AnimatePresence>
             {(testing || testDone) && (
               <motion.div
@@ -294,7 +286,6 @@ export const AudioSetupPage: React.FC = () => {
             )}
           </AnimatePresence>
 
-          {/* ── Status pills ── */}
           <div className="grid grid-cols-2 gap-2">
             {[
               { label: "Microphone", status: micStatus },
@@ -321,7 +312,6 @@ export const AudioSetupPage: React.FC = () => {
             ))}
           </div>
 
-          {/* ── Mic error detail ── */}
           <AnimatePresence>
             {micStatus === "error" && micError && (
               <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
@@ -333,7 +323,6 @@ export const AudioSetupPage: React.FC = () => {
             )}
           </AnimatePresence>
 
-          {/* ── Test + Reset buttons ── */}
           <div className="flex gap-2">
             <motion.button
               whileHover={{ scale: 1.015 }} whileTap={{ scale: 0.98 }}
@@ -362,7 +351,6 @@ export const AudioSetupPage: React.FC = () => {
             </AnimatePresence>
           </div>
 
-          {/* ── Info chip ── */}
           <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl" style={{ background: PANEL_BG, border: `1px solid ${BORDER}` }}>
             <span className="text-[13px] shrink-0 mt-0.5">🎧</span>
             <p className="text-[9px] font-medium leading-relaxed" style={{ color: SUBTLE }}>
@@ -371,7 +359,6 @@ export const AudioSetupPage: React.FC = () => {
           </div>
         </div>
 
-        {/* ── Footer ── */}
         <div className="px-3.5 pb-3.5 pt-2.5" style={{ borderTop: `1px solid ${BORDER}` }}>
           <motion.button
             whileHover={{ scale: 1.015 }} whileTap={{ scale: 0.98 }}

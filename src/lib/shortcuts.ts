@@ -1,7 +1,5 @@
-// Builds the accelerator strings passed to electron/hotkeys.ts, which validates
-// them with electron/accelerator.ts before globalShortcut ever sees them.
-// "Move Window" stays fixed (its 4-key group doesn't fit a single-combo remap
-// UI) and is shown for reference only.
+// Builds accelerator strings for electron/hotkeys.ts (validated by electron/accelerator.ts).
+// "Move Window" stays fixed because its 4-key group doesn't fit a single-combo remap UI.
 export const REMAPPABLE_SHORTCUTS: { label: string; action: string }[] = [
   { label: "Ask AI",        action: "solve" },
   { label: "Screenshot",    action: "captureAndSolve" },
@@ -13,8 +11,7 @@ export const REMAPPABLE_SHORTCUTS: { label: string; action: string }[] = [
   { label: "Scroll Down",   action: "nextQuestionPage" },
 ];
 
-// Formats an Electron accelerator string ("CommandOrControl+Shift+E") into the
-// short display form used elsewhere in this panel ("Ctrl+Shift+E").
+// Formats "CommandOrControl+Shift+E" into the short display form used in this panel.
 export function formatAccelerator(accelerator: string): string {
   return accelerator
     .split("+")
@@ -22,11 +19,8 @@ export function formatAccelerator(accelerator: string): string {
     .join(" + ");
 }
 
-// e.key values whose accelerator spelling differs. Anything absent from here
-// that is not a single printable character, F1-F24 or a named key is rejected
-// rather than passed through: " " and "+" used to produce
-// "CommandOrControl+ " and "CommandOrControl+Shift++", both of which Electron's
-// converter throws on (see electron/accelerator.ts).
+// Keys whose accelerator spelling differs. Anything else that is not printable, F1-F24 or a
+// named key is rejected: " " and "+" would produce strings Electron's converter throws on.
 const KEY_ALIASES: Record<string, string> = {
   " ": "Space",
   "+": "Plus",
@@ -53,10 +47,8 @@ function mainKeyOf(key: string): string | null {
   return null;
 }
 
-// Builds an accelerator string from a keydown event, or null when the combo is
-// unusable (modifier-only, no modifier, or a key Electron cannot express).
-// Callers keep listening on null rather than saving a shortcut that would
-// silently fail to register.
+// Builds an accelerator from a keydown event, or null when unusable (modifier-only, no
+// modifier, or a key Electron can't express); callers keep listening on null, never saving it.
 export function keyEventToAccelerator(e: KeyboardEvent): string | null {
   const mods: string[] = [];
   if (e.ctrlKey || e.metaKey) mods.push("CommandOrControl");
@@ -71,9 +63,8 @@ export function keyEventToAccelerator(e: KeyboardEvent): string | null {
   return [...mods, mainKey].join("+");
 }
 
-// True when the keydown event produced no usable combo because the key itself
-// cannot be expressed (as opposed to the user still holding only modifiers).
-// The settings panel uses this to tell the user why nothing happened.
+// True when the key itself cannot be expressed (not merely modifier-only); the settings
+// panel uses this to tell the user why nothing happened.
 export function isUnsupportedKey(e: KeyboardEvent): boolean {
   if (["Control", "Meta", "Alt", "Shift"].includes(e.key)) return false;
   return mainKeyOf(e.key) === null;

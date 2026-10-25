@@ -11,14 +11,8 @@ import { registerIpcHandlers, getStoredShortcuts, assertTrustedSender } from "./
 import { applyStealthMode, removeStealthMode, safeguardVisibility } from "./stealth";
 import { captureFullScreen } from "./capture";
 
-// No such safety net existed anywhere in the main process before — any
-// unhandled error (a stray EADDRINUSE, a destroyed-window call, a rejected
-// promise) was fatal to the whole app by default with zero log/diagnostic.
-// This doesn't fix the underlying bugs (each specific one is handled at its
-// source elsewhere), it's a last-resort backstop so a future unforeseen one
-// logs and survives instead of silently killing the app. Routed through
-// electron-log, not console: a packaged Windows launch has no attached console,
-// so console-only output was invisible exactly where it was needed most.
+// Last-resort backstop: an unhandled error in the main process is fatal by default.
+// Routed through electron-log because a packaged Windows launch has no console.
 process.on("uncaughtException", (err) => {
   log.error("[Ghostly] Uncaught exception (recovered):", err);
 });
@@ -26,13 +20,8 @@ process.on("unhandledRejection", (reason) => {
   log.error("[Ghostly] Unhandled rejection (recovered):", reason);
 });
 
-// ── IPC sender gate ───────────────────────────────────────────────────────────
-// Every channel registered in this file is reachable from any frame in the
-// window. The support ad is a srcDoc iframe with allow-scripts +
-// allow-same-origin, so it shares this document's origin, this preload bridge
-// and — before this — `ghostly:get-pending-auth-token`, i.e. a live session
-// token, `ghostly:quit`, `ghostly:open-external` and the rest. ipc.ts applies
-// the same gate to its own handlers.
+// Reachable from any frame: the support ad is a same-origin srcDoc iframe with this
+// preload bridge, so it could invoke ghostly:get-pending-auth-token or ghostly:quit.
 function trustedHandle(
   channel: string,
   listener: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => any,
@@ -51,8 +40,7 @@ function trustedOn(
     try {
       assertTrustedSender(event);
     } catch {
-      // An untrusted frame (the ad) sent this — drop it. There is nothing
-      // useful to reply with on a fire-and-forget channel.
+      // Untrusted frame (the ad) — drop it; nothing to reply with on a fire-and-forget channel.
       return;
     }
     listener(event, ...args);
@@ -63,55 +51,28 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let authServer: http.Server | null = null;
 
-// The website's AuthCallback page posts here after Google OAuth completes, in a
-// system-browser tab entirely separate from this window. webContents.send() is
-// fire-and-forget — if this fires before the renderer has mounted and called
-// onAuthToken() (a real possibility: this HTTP server is listening as soon as
-// app.whenReady() resolves, well before the React bundle finishes loading), the
-// message is just lost and login looks "stuck" even though the website says it
-// succeeded. Buffering it here lets the renderer pick it up on mount too.
+// The OAuth callback lands in a system-browser tab, and webContents.send() is
+// fire-and-forget — buffer it in case the renderer hasn't mounted onAuthToken() yet.
 let pendingAuthToken: { token: string; user: any } | null = null;
 
-// Same race as pendingAuthToken above, for a different event: registerHotkeys()
-// runs right after createMainWindow(), well before the renderer's React app has
-// mounted a listener — so a live webContents.send() here can be lost too.
+// Same mount race as pendingAuthToken: registerHotkeys() runs before the renderer
+// has a listener, so a live send here can be lost.
 let pendingHotkeyConflict: ShortcutAction[] | null = null;
 
-// startAuthServer() previously had zero error handling — an EADDRINUSE/EACCES
-// on port 7842 (a second app instance, a leftover process) was an unhandled
-// Node 'error' event with no top-level uncaughtException handler anywhere in
-// this file, which is fatal to the whole process by default. If it somehow
-// didn't crash the app, login was silently, undiagnosably dead forever (the
-// website's POST to 127.0.0.1:7842/auth just gets ECONNREFUSED). Buffered the
-// same way as pendingAuthToken/pendingHotkeyConflict for the same mount race.
+// EADDRINUSE/EACCES on port 7842 is an unhandled 'error' event that kills the process
+// and leaves login dead, so surface it; buffered for the same mount race as above.
 let pendingAuthServerError: string | null = null;
 
-// Populated by warmScreenSource() well before the user ever enables audio, so the
-// live setDisplayMediaRequestHandler below almost always hits the cache instead of
-// running the remove-stealth -> enumerate -> reapply-after-800ms dance while the
-// user may already be mid screen-share (that live dance was the "overlay briefly
-// visible in Google Meet" leak). Kept at module scope so both the pre-warm call and
-// the request handler share the same cache.
+// Pre-warmed by warmScreenSource() so the display-media handler hits the cache instead
+// of running the remove-stealth -> enumerate -> reapply dance mid screen-share.
 let cachedScreenSource: Electron.DesktopCapturerSource | null = null;
 let screenSourceWarmupPromise: Promise<void> | null = null;
-// Distinguishes "never attempted" from "attempted, genuinely came back empty"
-// — cachedScreenSource alone can't tell those apart (a resolved-but-empty
-// getSources() call sets it to null via .then, identical to the .catch path).
-// Without this, every later live getDisplayMedia() call (i.e. every audio
-// enable/re-enable, possibly mid screen-share) would re-run the risky
-// remove-stealth -> enumerate -> reapply-after-800ms dance forever whenever
-// the very first attempt happened to return zero sources — a real, observed
-// possibility right after launch before display/GPU state has settled.
+// Distinguishes "never attempted" from "attempted, came back empty" — without it every
+// later getDisplayMedia() would re-run the risky stealth dance on a zero-source result.
 let screenSourceWarmupAttempted = false;
 
-// A cached source describes ONE display at ONE moment: its `id` encodes the
-// display, and `getDisplayMedia` resolves against that id. Plugging in a
-// monitor, unplugging one or changing scaling (the common one: docking a
-// laptop) invalidates it, and the desktop-capture API then refuses the stale
-// id — so the video track never comes back and system audio stays dead for the
-// rest of the session, with no way to fix it short of a restart. Same after a
-// lock/unlock: the capture session is torn down with the desktop switch. Drop
-// the cache on all of those and let the next request re-warm it.
+// A cached source pins one display at one moment; docking, unplugging a monitor,
+// scaling changes or lock/unlock invalidate its id and kill system audio.
 function invalidateScreenSource(): void {
   cachedScreenSource = null;
   screenSourceWarmupPromise = null;
@@ -123,24 +84,16 @@ function warmScreenSource(): Promise<void> {
   if (screenSourceWarmupPromise) return screenSourceWarmupPromise;
 
   if (screenSourceWarmupAttempted) {
-    // Already tried the stealth-removing dance once this session and it came
-    // back empty. Don't repeat it live — that's the leak. Best-effort retry
-    // the enumeration alone (no stealth touched) so a transient failure can
-    // still self-heal by the next call, without ever risking a live capture
-    // window during an actual screen share.
+    // Already tried the stealth dance and it came back empty — retry the enumeration
+    // without touching stealth rather than risking a live capture window mid share.
     desktopCapturer.getSources({ types: ["screen"] })
       .then((sources) => { if (sources[0]) cachedScreenSource = sources[0]; })
       .catch(() => {});
     return Promise.resolve();
   }
 
-  // desktopCapturer.getSources() runs a Windows desktop-duplication capture session.
-  // If our own window is WDA_EXCLUDEFROMCAPTURE at that exact moment, Windows' DWM
-  // can stop compositing that window to the real screen too (not just to capture
-  // streams) — the whole app, TopBar included, goes invisible on the user's own
-  // monitor. Drop the exclusion for the duration of the enumeration, then restore
-  // it once the capture session has actually torn down. This whole dance runs at
-  // most ONCE per app session — see screenSourceWarmupAttempted above.
+  // getSources() runs a Windows duplication session; with our window WDA_EXCLUDEFROMCAPTURE
+  // DWM can stop compositing it to the real screen, so drop the exclusion and restore after.
   if (mainWindow) removeStealthMode(mainWindow);
   screenSourceWarmupPromise = desktopCapturer
     .getSources({ types: ["screen"] })
@@ -160,22 +113,13 @@ function warmScreenSource(): Promise<void> {
   return screenSourceWarmupPromise;
 }
 
-// ── Local OAuth callback server ────────────────────────────────────────────────
-// This used to answer every request with `Access-Control-Allow-Origin: *` and a
-// blanket 200 on OPTIONS, i.e. any page the user had open in their browser could
-// POST a token here and silently swap the logged-in account. CORS is now answered
-// only for the product's own site, the body is capped, a second login can't race
-// an unconsumed token, and a state nonce is validated whenever the caller sends
-// one (see the note on `authStateNonce`).
+// CORS answers only the product's own site, the body is capped, a second login can't
+// race an unconsumed token, and a sent state nonce must match (see authStateNonce).
 const ALLOWED_AUTH_ORIGIN = /^https:\/\/([a-z0-9-]+\.)*ghotlyai\.in$/;
 const AUTH_BODY_LIMIT = 64 * 1024;
 const AUTH_LOGIN_URL = /^https:\/\/(www\.)?ghotlyai\.in\/electron-login/;
-// Generated fresh every time the login URL is opened and appended to it as
-// ?state=. The website's AuthCallback page doesn't echo it yet, so a POST
-// without a state field is still accepted (requiring it today would break every
-// login); any POST that does carry one must match, and the nonce is burned on
-// first use. That way the CSRF protection is already in place and takes effect
-// the moment the website forwards the parameter.
+// Fresh per login URL open, appended as ?state=. A POST without one is still accepted
+// (the website doesn't echo it yet); any POST that sends one must match and burns it.
 let authStateNonce: string | null = null;
 
 function handleAuthRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -200,11 +144,8 @@ function handleAuthRequest(req: http.IncomingMessage, res: http.ServerResponse):
     return;
   }
 
-  // CORS only hides the response; it does not stop the request from running.
-  // A cross-origin POST with a simple content type skips the preflight above and
-  // would still set pendingAuthToken, so reject any browser-sent Origin that is
-  // not the product's own site. Requests with no Origin (the website's
-  // server-side callback) are unaffected.
+  // CORS only hides the response, not the request: a simple cross-origin POST skips
+  // preflight and would still set pendingAuthToken, so reject foreign Origins.
   if (origin && !ALLOWED_AUTH_ORIGIN.test(origin)) {
     res.writeHead(403);
     res.end();
@@ -217,9 +158,7 @@ function handleAuthRequest(req: http.IncomingMessage, res: http.ServerResponse):
     return;
   }
 
-  // A token the renderer hasn't consumed yet is still pending; a second POST
-  // can only mean a retry race, or something that learned the port trying to
-  // overwrite a real login with its own.
+  // A second POST while one is pending is a retry race or an attempt to overwrite it.
   if (pendingAuthToken) {
     res.writeHead(409, cors);
     res.end();
@@ -322,13 +261,10 @@ function createMainWindow(): BrowserWindow {
       preload: path.join(__dirname, "../preload/index.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      // The preload only bridges contextBridge + ipcRenderer, so it runs
-      // unchanged in the sandbox — no need to leave the renderer with a full
-      // Node process behind one XSS. This is what stops the ad iframe (or any
-      // model-authored HTML) from reaching require/process directly.
+      // The preload only bridges contextBridge + ipcRenderer, so it runs sandboxed —
+      // no full Node process behind one XSS, and no reachable require/process.
       sandbox: true,
-      // Dragging a URL onto the window used to navigate it (dropping a link on
-      // the overlay replaced the whole app with that page, preload and all).
+      // Without this, dropping a link on the overlay navigates the whole app to that page.
       navigateOnDragDrop: false,
       // Shipping the DevTools UI in a packaged build is a free console into a
       // window whose preload can read every API key.
@@ -342,28 +278,25 @@ function createMainWindow(): BrowserWindow {
 
   enforceStealthOnWindow(win);
 
-  // mainWindow was never nulled on destroy — deferred timers (warmScreenSource's
-  // 800ms reapply, the 2s startup kickoff) could still fire against a stale,
-  // destroyed reference. applyStealthMode/removeStealthMode now guard on
-  // isDestroyed() too, but this closes the gap at the source.
+  // Null the module-level reference: deferred timers (warmScreenSource's 800ms
+  // reapply, the 2s kickoff) could otherwise fire against a destroyed window.
   win.on("closed", () => { if (mainWindow === win) mainWindow = null; });
 
-  // Surface renderer failures to the terminal instead of leaving a silently blank
-  // window — a transparent frameless window that fails to paint looks identical to
-  // one that's simply "not visible", with no way to tell the difference otherwise.
+  // Surface renderer failures: a transparent frameless window that fails to paint looks
+  // identical to one that's simply hidden.
   win.webContents.on("did-fail-load", (_e, errorCode, errorDescription, validatedURL) => {
     console.error(
-      `[Ghostly] ❌ Renderer failed to load (${errorCode} ${errorDescription}): ${validatedURL}`,
+      `[Ghostly] Renderer failed to load (${errorCode} ${errorDescription}): ${validatedURL}`,
     );
   });
   win.webContents.on("render-process-gone", (_e, details) => {
-    console.error("[Ghostly] ❌ Renderer process gone:", JSON.stringify(details));
+    console.error("[Ghostly] Renderer process gone:", JSON.stringify(details));
   });
   win.webContents.on("unresponsive", () => {
-    console.error("[Ghostly] ❌ Renderer became unresponsive");
+    console.error("[Ghostly] Renderer became unresponsive");
   });
   win.webContents.on("preload-error", (_e, preloadPath, error) => {
-    console.error(`[Ghostly] ❌ Preload script error in ${preloadPath}:`, error);
+    console.error(`[Ghostly] Preload script error in ${preloadPath}:`, error);
   });
   if (!app.isPackaged) {
     win.webContents.on("console-message", (_e, level, message, line, sourceId) => {
@@ -396,19 +329,15 @@ function toggleWindowVisibility() {
   const isCurrentlyHidden = mainWindow.getOpacity() === 0 || !mainWindow.isVisible();
   if (isCurrentlyHidden) {
     mainWindow.setOpacity(1);
-    // showInactive(), not show() + focus() — see hotkeys.ts's toggleVisibility
-    // for why: this window never needs OS focus to work, and stealing it from
-    // a fullscreen interview/assessment tab is what trips proctoring platforms'
-    // "tab switched" detection.
+    // showInactive(), not show() + focus(): stealing focus from a fullscreen interview
+    // tab trips proctoring "tab switched" detection (see hotkeys.ts).
     mainWindow.showInactive();
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.setAlwaysOnTop(true, "screen-saver");
     mainWindow.setIgnoreMouseEvents(false);
     mainWindow.webContents.send("ghostly:show");
-    // The 0 -> 1 opacity jump can leave Windows' DWM holding a stale (blank)
-    // composited frame for this window — same class of bug as the stealth-mode
-    // repaint glitch, just triggered by the ordinary hide/show toggle instead of
-    // SetWindowDisplayAffinity. Nudge it so it can never come back up blank.
+    // The 0 -> 1 opacity jump can leave DWM holding a stale blank frame (same glitch as
+    // stealth mode), so nudge a repaint instead of coming back up invisible.
     safeguardVisibility(mainWindow);
   } else {
     mainWindow.setOpacity(0);
@@ -428,9 +357,8 @@ function createTray(): Tray {
     {
       label: "Capture Screen",
       click: async () => {
-        // Used to send the screenshot IPC event with no payload at all —
-        // Home.tsx's listener assumed it always gets a real base64 image, so
-        // the AI silently answered with no visual context and no error shown.
+        // Send a real payload or an error: Home.tsx's listener always expects base64, and
+        // a bare event made the AI answer with no visual context.
         try {
           const base64 = await captureFullScreen(mainWindow);
           mainWindow?.webContents.send("ghostly:screenshot", base64);
@@ -447,7 +375,7 @@ function createTray(): Tray {
   return t;
 }
 
-// ── Single instance lock — MUST be before app.whenReady ──────────────────────
+// Must be before app.whenReady.
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
@@ -461,13 +389,8 @@ if (!gotTheLock) {
     }
   });
 
-  // ── Navigation / new-window guard ───────────────────────────────────────────
-  // Nothing in the renderer ever navigates anywhere: it's one file:// (or dev
-  // http://localhost) document. Without this, any link or window.open() — and
-  // remark-gfm renders model output full of links — could replace that document
-  // with a remote page while the privileged preload stayed attached, or pop a
-  // real Electron window around one. Anything that isn't ours is blocked, and
-  // external https: links go to the system browser instead.
+  // remark-gfm renders model output full of links, and navigation would replace the
+  // document with a remote page under the privileged preload; only our own URLs load.
   const isAllowedNavigation = (target: string): boolean => {
     try {
       const { protocol, hostname } = new URL(target);
@@ -499,30 +422,21 @@ if (!gotTheLock) {
     });
   });
 
-  // Must run before app.whenReady() — Electron reads scheme privileges once, at
-  // process start. `standard` makes app:// URLs parse like http(s):// (host +
-  // path instead of one opaque string), `secure` keeps them out of the insecure
-  // origin bucket, and supportFetchAPI lets the protocol.handle() below serve
-  // them through net.fetch.
+  // Must run before app.whenReady(): privileges are read once at process start.
+  // standard = http-like parsing, secure = not an insecure origin, supportFetchAPI = net.fetch.
   protocol.registerSchemesAsPrivileged([
     { scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true } },
   ]);
 
-  // ── App ready ───────────────────────────────────────────────────────────────
   app.whenReady().then(() => {
-    // Register deep link protocol
     if (process.defaultApp && process.argv.length >= 2) {
       app.setAsDefaultProtocolClient("ghostly", process.execPath, [path.resolve(process.argv[1])]);
     } else {
       app.setAsDefaultProtocolClient("ghostly");
     }
 
-    // Local images for the renderer (Home.tsx builds `app://mahesh.png` when the
-    // page itself was loaded from file://). This replaced
-    // protocol.registerFileProtocol, which called callback({ path }) with a path
-    // joined straight from the URL — `app://../../../../Users/…` escaped the
-    // renderer folder and served any file on disk to the page. The path is
-    // resolved against the renderer root and refused if it leaves that root.
+    // Serves local images (Home.tsx builds app://mahesh.png when loaded from file://).
+    // The path is resolved against the renderer root and refused if it escapes.
     const rendererRoot = app.isPackaged
       ? path.join(process.resourcesPath, "app.asar", "out", "renderer")
       : path.join(__dirname, "../../out/renderer");
@@ -552,25 +466,15 @@ if (!gotTheLock) {
       mainWindow.webContents.send("ghostly:hotkey-conflict", hotkeyResult.failed);
     }
 
-    // A cached desktopCapturer source is only valid for the display/desktop
-    // state it was enumerated in — see invalidateScreenSource.
+    // A cached source is only valid for the display/desktop state it was enumerated in.
     screen.on("display-added", invalidateScreenSource);
     screen.on("display-removed", invalidateScreenSource);
     screen.on("display-metrics-changed", invalidateScreenSource);
     powerMonitor.on("lock-screen", invalidateScreenSource);
     powerMonitor.on("unlock-screen", invalidateScreenSource);
 
-    // Permissions
-    // The overlay needs exactly two things: getDisplayMedia for the loopback
-    // audio track ("display-capture") and, on the Audio Setup screen,
-    // getUserMedia for a microphone check ("media", audio only —
-    // src/pages/AudioSetupPage.tsx:47). Camera is denied outright, and only the
-    // top-level document of this window is considered at all: the support ad
-    // runs in a sandboxed iframe with the same preload attached and used to be
-    // able to request camera/microphone through this same blanket allowlist.
-    // ("audioCapture" is kept because Electron has used that name for the
-    // loopback device on some platforms/versions; it never matched the old
-    // sweeper list on this one.)
+    // Main frame only: display-capture/audioCapture for loopback audio and audio-only
+    // getUserMedia for the mic check; camera is denied outright.
     const permissionAllowed = (
       permission: string,
       details: { isMainFrame?: boolean; mediaTypes?: Array<"video" | "audio"> },
@@ -593,31 +497,19 @@ if (!gotTheLock) {
         mediaTypes: d.mediaType === "video" || d.mediaType === "audio" ? [d.mediaType] : undefined,
       });
     });
-    // useInterviewAudio's startInterview() calls getDisplayMedia() fresh every time the
-    // user (re)enables audio — including mid-interview, after disabling and re-enabling
-    // while already screen-sharing in Zoom/Meet/Teams. warmScreenSource() is kicked off
-    // proactively (see setTimeout below) well before this normally fires, so this is
-    // almost always just a cache read — no live remove-stealth/enumerate/reapply dance
-    // in the middle of an active screen share, which is exactly the "window briefly
-    // visible in Google Meet" bug users reported. The video track is stopped
-    // immediately after this resolves anyway (only the loopback audio is used), so the
-    // resolved screen source is safe to cache and reuse for the rest of the app session.
+    // startInterview() calls getDisplayMedia() on every audio re-enable, including mid
+    // share; warmScreenSource() pre-warms so this is almost always a cache read.
     mainWindow.webContents.session.setDisplayMediaRequestHandler((_req, cb) => {
       warmScreenSource().then(() => {
-        // audio: "loopback" — captures ALL system audio including Zoom, Meet, Teams
-        // This is the key flag that makes cross-app audio capture work on Windows
+        // audio: "loopback" captures all system audio (Zoom, Meet, Teams) on Windows.
         cb(cachedScreenSource ? { video: cachedScreenSource, audio: "loopback" } : {});
       });
     });
 
-    // Pre-warm the screen source now, while the user is very unlikely to already be
-    // mid screen-share (app just launched) — by the time they actually join a call and
-    // enable audio, the handler above should already have a cache hit. The delay lets
-    // the window finish its initial show + first applyStealthMode() from
-    // "ready-to-show" so the two stealth toggles don't race each other.
+    // Pre-warm now (app just launched, so no share is likely active); the delay lets the
+    // initial show + applyStealthMode() finish so the two stealth toggles don't race.
     setTimeout(() => warmScreenSource(), 2000);
 
-    // IPC handlers
     trustedHandle("ghostly:get-pending-auth-token", () => {
       const pending = pendingAuthToken;
       pendingAuthToken = null;
@@ -633,11 +525,8 @@ if (!gotTheLock) {
       pendingAuthServerError = null;
       return pending;
     });
-    // https: and mailto: only — http: used to be in this list, which made the
-    // channel an "open any plaintext URL" primitive for whatever frame called
-    // it. Addresses with embedded credentials (https://user:pass@host) or
-    // whitespace/control characters (a CR/LF here is a protocol-handler
-    // injection) are refused before they reach the OS.
+    // https: and mailto: only (http: would be an "open any plaintext URL" primitive);
+    // credentials and CR/LF are refused before reaching the OS handler.
     const SAFE_EXTERNAL_URL =
       /^(?:https:\/\/[a-z0-9.-]+(?::\d{1,5})?(?:[/?#][^\s]*)?|mailto:[^\s@]+@[^\s@]+\.[^\s@]+(?:\?[^\s]*)?)$/i;
     trustedOn("ghostly:open-external", (_event, url: string) => {
@@ -645,22 +534,16 @@ if (!gotTheLock) {
       if (/[\u0000-\u001f\u007f]/.test(url)) return;
       if (!SAFE_EXTERNAL_URL.test(url)) return;
       if (AUTH_LOGIN_URL.test(url)) {
-        // Fresh nonce per login attempt, forwarded as ?state= so a POST to the
-        // local auth server can be tied back to a login the user actually
-        // started (see authStateNonce). Ignored by the website today.
+        // Fresh nonce per login attempt, forwarded as ?state= to tie the local auth
+        // POST back to a login the user actually started (see authStateNonce).
         authStateNonce = randomBytes(16).toString("hex");
         url = `${url}${url.includes("?") ? "&" : "?"}state=${authStateNonce}`;
       }
       void shell.openExternal(url);
     });
     trustedOn("ghostly:enable-mouse", () => mainWindow?.setIgnoreMouseEvents(false));
-    // Used to be byte-identical to enable-mouse above (also just (false)) instead
-    // of restoring click-through — after any hotkey capture puts the window into
-    // click-through mode (setIgnoreMouseEvents(true, {forward:true})) so the
-    // meeting app underneath stays clickable, the moment the pointer entered ANY
-    // button (every onMouseEnter across the renderer calls enableMouse()) this
-    // never correctly went back, permanently breaking click-through for the rest
-    // of that visible session.
+    // Must restore click-through: hotkey captures put the window in
+    // setIgnoreMouseEvents(true, { forward: true }) mode, and (false) here broke it.
     trustedOn("ghostly:disable-mouse", () => mainWindow?.setIgnoreMouseEvents(true, { forward: true }));
     trustedOn("ghostly:set-opacity", (_event, value: number) => {
       if (mainWindow && typeof value === "number" && Number.isFinite(value)) {
@@ -688,12 +571,6 @@ if (!gotTheLock) {
     });
     trustedOn("ghostly:quit", () => app.quit());
     trustedOn("ghostly:get-version", (event) => { event.returnValue = app.getVersion(); });
-    // Removed dead "ghostly:move" handler — preload.ts never exposed a sender
-    // for it (unreachable from the renderer), and window repositioning is
-    // already fully covered by hotkeys.ts's registerMoveKeys()
-    // (Ctrl+Up/Down/Left/Right global shortcuts).
-
-    // ── Auto Updater ────────────────────────────────────────────────────────
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = true;
     autoUpdater.logger = require("electron-log");
@@ -727,14 +604,8 @@ if (!gotTheLock) {
     });
 
     trustedOn("ghostly:download-update", () => autoUpdater.downloadUpdate());
-    // quitAndInstall() with no args runs with isSilent=false — electron-updater's own
-    // docs say isForceRunAfter is IGNORED in that mode, so whether the app relaunches
-    // after installing was left entirely to the NSIS installer's own default UI flow
-    // (not guaranteed, and a second native installer window popping up after the app's
-    // own "Installing Update" animation above was confusing either way). A user who
-    // updates then immediately tries the browser login hits "desktop app not detected"
-    // with no way to recover short of noticing the app never reopened and launching it
-    // by hand. isSilent=true actually honors isForceRunAfter, guaranteeing a relaunch.
+    // isSilent=true is what makes isForceRunAfter honored: without it electron-updater
+    // ignores the flag and the app may not relaunch after installing.
     trustedOn("ghostly:install-update", () => autoUpdater.quitAndInstall(true, true));
     trustedOn("ghostly:check-update", () => {
       if (app.isPackaged) {
@@ -744,16 +615,12 @@ if (!gotTheLock) {
       }
     });
 
-    // Check for updates 3 seconds after app ready
     if (app.isPackaged) {
       setTimeout(() => autoUpdater.checkForUpdates(), 3000);
     }
   }).catch((err) => {
-    // Anything thrown above (a bad protocol registration, a store that can't be
-    // read, a port/session failure) used to leave the app running with zero
-    // ipcMain handlers registered — every button in the renderer then hangs on
-    // an invoke that never resolves, with no window/error to explain it, and
-    // the blanket unhandledRejection handler at the top swallowed the cause.
+    // Without this the app keeps running with zero ipcMain handlers: every renderer
+    // invoke hangs forever and the top-level handler swallows the cause.
     log.error("[Ghostly] Fatal startup error:", err);
     dialog.showErrorBox(
       "Ghotly AI couldn't start",
@@ -765,18 +632,16 @@ if (!gotTheLock) {
   app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
   app.on("before-quit", () => {
     unregisterHotkeys();
-    // close() alone only stops new connections — a browser tab holding the
-    // OAuth callback's keep-alive socket keeps the process alive and the app
-    // visibly fails to quit.
+    tray?.destroy();
+    // close() only stops new connections; a browser tab holding the OAuth callback's
+    // keep-alive socket keeps the process alive, so drop those too.
     authServer?.closeAllConnections();
     authServer?.close();
   });
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length > 0) return;
-    // Every global shortcut is bound to a specific BrowserWindow from
-    // registerHotkeys(). On macOS (the only platform where closing the window
-    // doesn't quit) the recreated window used to come back with all of them
-    // still pointing at the destroyed one, so no hotkey worked until restart.
+    // Shortcuts are bound to a specific BrowserWindow, so on macOS (where closing the
+    // window doesn't quit) the recreated window needs them re-registered against it.
     const win = createMainWindow();
     mainWindow = win;
     unregisterHotkeys();

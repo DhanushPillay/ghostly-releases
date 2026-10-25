@@ -9,11 +9,7 @@ import { EMPTY_PROFILE, PROFILE_KEYS } from "../lib/resume/types";
 import type { ProfileKey } from "../lib/resume/types";
 import { useResumeImport } from "../lib/resume/useResumeImport";
 
-// Same light palette as LoginPage.tsx/HomePage.tsx — this wizard step was
-// restyled to match, keeping every existing field/behavior (company,
-// position, Auto AI toggle, custom instructions, candidate profile tab).
-// Interview language is English only (the transcription and answer prompts are
-// English-only), so it is shown as a fixed pill instead of a picker.
+// English-only: transcription and answer prompts have no language switch, so it shows as a fixed pill.
 // The Profile tab can be filled by uploading a resume (see lib/resume/).
 const INK = "#15162b";
 const SUBTLE = "#6b7280";
@@ -113,14 +109,14 @@ export const InterviewSetupPage: React.FC = () => {
   const [profile, setProfile]         = useState<CandidateProfile>(savedProfile ?? EMPTY_PROFILE);
   const [activeTab, setActiveTab]     = useState<"session" | "profile">("session");
 
-  // ── resume import bookkeeping ──
+  // Resume import bookkeeping.
   const profileRef = useRef(profile);
   profileRef.current = profile;
-  // fields currently holding resume-derived values the user has not edited since
+  // Fields holding resume-derived values the user has not edited since.
   const [autoKeys, setAutoKeys] = useState<ReadonlySet<ProfileKey>>(() => new Set());
   const autoKeysRef = useRef(autoKeys);
   autoKeysRef.current = autoKeys;
-  // snapshots from before each import / removal, for Undo
+  // Snapshots from before each import / removal, for Undo.
   const [undoStack, setUndoStack] = useState<CandidateProfile[]>([]);
   const [flash, setFlash] = useState<{ token: number; keys: ReadonlySet<ProfileKey> }>({ token: 0, keys: new Set() });
   const [notice, setNotice] = useState<{ text: string; undo?: boolean } | null>(null);
@@ -235,7 +231,6 @@ export const InterviewSetupPage: React.FC = () => {
         }}
         onMouseEnter={() => window.ghostly.enableMouse()}
       >
-        {/* ── Header ── */}
         <div className="flex items-center justify-between px-3.5 py-2.5" style={{ WebkitAppRegion: "drag", borderBottom: `1px solid ${BORDER}` } as React.CSSProperties}>
           <div className="flex items-center gap-2">
             <span style={{ fontSize: "15px" }}>🎯</span>
@@ -259,7 +254,6 @@ export const InterviewSetupPage: React.FC = () => {
           </button>
         </div>
 
-        {/* ── Tabs ── */}
         <div className="flex gap-1.5 px-3.5 pt-3">
           {TABS.map(tab => (
             <button
@@ -291,7 +285,7 @@ export const InterviewSetupPage: React.FC = () => {
                 <LightInput id="position" value={position} onChange={setPosition} placeholder="SWE, PM…" label="Position *" emoji="💼" />
               </div>
 
-              {/* Interview language — English only (static, not a control) */}
+              {/* Interview language is English only, not a control. */}
               <div className="flex flex-col gap-1">
                 <label className="text-[8px] font-black uppercase tracking-[0.12em]" style={{ color: SUBTLE }}>🌐 Interview Language</label>
                 <div
@@ -304,7 +298,6 @@ export const InterviewSetupPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Auto AI toggle */}
               <div className="flex items-center justify-between px-3 py-3 rounded-xl" style={{ background: PANEL_BG, border: `1px solid ${BORDER}` }}>
                 <div>
                   <p className="text-[11px] font-bold" style={{ color: INK }}>Auto AI Answer</p>
@@ -356,13 +349,12 @@ export const InterviewSetupPage: React.FC = () => {
                 </p>
               </div>
 
-              {/* the manual fields stay editable at all times except while a resume is being filled in */}
+              {/* Manual fields stay editable except while a resume is being filled in. */}
               <div
                 className="flex flex-col gap-2.5 transition-opacity" aria-busy={importing}
                 style={{ opacity: importing ? 0.5 : 1, pointerEvents: importing ? "none" : "auto" }}
               >
-                {/* Name + phone are short; email and location are not, so they get a full row each — a value a
-                    resume just filled in must be readable without clicking into the field. */}
+                {/* Name + phone are short; email and location get a full row so a resume-filled value is readable. */}
                 <div className="grid grid-cols-2 gap-2">
                   {([
                     { key: "fullName", label: "Name",     emoji: "👤", ph: "Rahul Sharma"   },
@@ -400,7 +392,6 @@ export const InterviewSetupPage: React.FC = () => {
           )}
         </AnimatePresence>
 
-        {/* ── Footer ── */}
         <div className="px-3.5 pb-3.5 pt-2.5" style={{ borderTop: `1px solid ${BORDER}` }}>
           {!isReady && activeTab === "profile" && (
             <p className="text-[8.5px] font-semibold text-center mb-2 flex items-center justify-center gap-1.5" style={{ color: "#d97706" }}>

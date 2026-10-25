@@ -17,10 +17,8 @@ export class GroqProvider implements AIProvider {
       content: typeof m.content === "string" ? m.content : String(m.content),
     }));
 
-    // Groq has no vision-capable model right now — sending an image_url part to a
-    // text-only model is itself a hard API error, so degrade gracefully instead of
-    // silently dropping the screenshot or crashing: tell the model (and by extension
-    // the user, since this becomes part of the response) that it can't see the image.
+    // Groq has no vision-capable model, and an image_url part sent to a text-only model is
+    // a hard API error, so tell the model it can't see the image instead of dropping it.
     if (base64Image) {
       apiMessages.push({
         role: "user",

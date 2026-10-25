@@ -8,19 +8,12 @@ export interface ChatMessage {
   timestamp: number;
 }
 
-// Deepgram's speech models are built for 16 kHz mono. The AudioContext this
-// capture runs in follows the Windows default playback device, which is 48 kHz
-// on essentially every machine — so the old worklet shipped 48 kHz PCM
-// (96 KB/s, 9600-byte messages) for audio that carries no information above
-// 8 kHz. Resampling to 16 kHz in the worklet costs one biquad plus a fractional
-// read cursor and cuts the wire rate (and everything Deepgram has to ingest)
-// to a third.
+// Deepgram's speech models want 16 kHz mono; the AudioContext follows the Windows
+// playback device (48 kHz), so resample in the worklet instead of shipping 3x bytes.
 const DEEPGRAM_SAMPLE_RATE = 16000;
 
-// Pre-gain applied to the raw system-audio loopback. This was a fixed 2.6
-// (+8 dB), which hard-clips already-loud system output — clipped audio is the
-// most likely cause of "the transcript is garbled". A mild lift still rescues
-// quiet system audio, and the compressor downstream catches any overshoot.
+// Mild pre-gain for the raw loopback: the old fixed 2.6 (+8 dB) hard-clipped loud
+// system output, the most likely cause of garbled transcripts.
 const SYSTEM_AUDIO_GAIN = 1.4;
 
 const rawChunkerCode = `
@@ -36,9 +29,8 @@ class RawChunker extends AudioWorkletProcessor {
     this.fifo = new Float32Array(1024);
     this.fifoLen = 0;
     this.rpos = 0;
-    // RBJ low-pass (Butterworth, Q = 0.707) at 7 kHz, just under the 8 kHz
-    // Nyquist of OUT_RATE. Decimating without it folds everything above 8 kHz
-    // back down on top of the speech as aliasing noise.
+    // RBJ low-pass (Butterworth, Q = 0.707) at 7 kHz, just under the 8 kHz Nyquist of OUT_RATE;
+    // decimating without it folds everything above 8 kHz back as aliasing noise.
     const w0 = 2 * Math.PI * 7000 / sampleRate;
     const alpha = Math.sin(w0) / (2 * 0.707);
     const cw = Math.cos(w0);
@@ -98,7 +90,7 @@ class RawChunker extends AudioWorkletProcessor {
 registerProcessor('raw-chunker', RawChunker);
 `;
 
-// Fix: sanitize transcript to prevent XSS — strip HTML tags and control chars
+// Strip HTML tags and control chars from transcripts (XSS defense).
 function sanitizeText(text: string): string {
   return String(text)
     .replace(/<[^>]*>/g, "")
@@ -117,10 +109,8 @@ export function useInterviewAudio() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const dgAccumulatedRef = useRef<string>("");
-  // Audio captured while the socket is still handshaking. Bounded on both
-  // axes: a captive portal or corporate proxy leaves the socket in CONNECTING
-  // for the whole session, and the old code buffered ~96 KB/s the entire time
-  // (tens of MB of ArrayBuffers) before flushing it all in one burst on open.
+  // Audio captured while the socket is handshaking, bounded on both axes: a captive
+  // portal could leave it CONNECTING all session and buffer tens of MB.
   const dgPendingRef = useRef<ArrayBuffer[]>([]);
   const dgPendingSinceRef = useRef(0);
   const MAX_PENDING_CHUNKS = 30; // 3 s of 16 kHz audio
@@ -128,11 +118,11 @@ export function useInterviewAudio() {
   const CONNECT_TIMEOUT_MS = 8000;
   const connectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Fix: separate refs for each resource — reliable cleanup
+  // Separate refs per resource so cleanup can't miss one.
   const streamsRef = useRef<MediaStream[]>([]);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const workletUrlRef = useRef<string | null>(null);
-  // Fix: isMounted guard prevents setState after unmount
+  // Prevents setState after unmount.
   const isRecordingRef = useRef(false);
   const isMountedRef = useRef(false);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -144,26 +134,15 @@ export function useInterviewAudio() {
   );
   const deepgramLanguage = useStore((s) => s.settings.deepgramLanguage ?? "");
 
-  // connectWebSocket (and therefore every reconnect it schedules) closes over
-  // the key/language from the render that started the session, so changing the
-  // key in Settings mid-interview left every retry authenticating with the old
-  // one. Read the live values through a ref instead.
+  // Reconnects close over the key/language from the starting render, so changing the
+  // key mid-interview left retries on the old one; read live values via a ref.
   const credsRef = useRef({ apiKey: deepgramApiKey, language: deepgramLanguage });
   useEffect(() => {
     credsRef.current = { apiKey: deepgramApiKey, language: deepgramLanguage };
   }, [deepgramApiKey, deepgramLanguage]);
 
-  // Watches for total silence right after starting — the #1 hard-to-diagnose
-  // complaint cluster is "mic/audio not working", and system-audio loopback
-  // (not a real microphone — see below) is a Windows OS-level capture of
-  // whatever the DEFAULT PLAYBACK device is. If a headset is connected but
-  // Windows or the calling app (Zoom/Meet/Teams) is actually routing audio
-  // through a different device/role (e.g. the headset became the default
-  // *communications* device but not the default *playback* device), loopback
-  // silently captures nothing — no error, just an empty transcript forever.
-  // This can't be fixed from inside the app (no browser/Electron API exposes
-  // which physical output loopback is tied to, or lets us pick one), so the
-  // best available fix is surfacing an actionable warning instead of silence.
+  // Watches for total silence after start: loopback captures only the Windows
+  // default playback device, which may not be the one the meeting plays through.
   const hasHeardAudioRef = useRef(false);
   const silenceWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -171,12 +150,11 @@ export function useInterviewAudio() {
     // A socket can fire onerror/onclose while the page is going away, and
     // setState on an unmounted component is at best wasted work.
     if (!isMountedRef.current) return;
-    // Fix: sanitize log messages — prevent log injection
+    // Sanitize to prevent log injection.
     const safeMsg = String(msg).replace(/[\r\n]/g, " ").slice(0, 300);
     setLogs((prev) => [...prev.slice(-49), `${new Date().toLocaleTimeString()} - ${safeMsg}`]);
   }, []);
 
-  // Fix: cleanup on unmount — prevents memory leak
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
@@ -210,7 +188,6 @@ export function useInterviewAudio() {
       connectTimerRef.current = null;
     }
     reconnectAttemptsRef.current = 0;
-    // Close WebSocket cleanly
     if (wsRef.current) {
       wsRef.current.onmessage = null;
       wsRef.current.onerror = null;
@@ -223,17 +200,14 @@ export function useInterviewAudio() {
       }
       wsRef.current = null;
     }
-    // Stop all media tracks
     streamsRef.current.forEach((s) => {
       try { s.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
     });
     streamsRef.current = [];
-    // Close AudioContext
     if (audioCtxRef.current) {
       try { audioCtxRef.current.close(); } catch { /* ignore */ }
       audioCtxRef.current = null;
     }
-    // Revoke blob URL
     if (workletUrlRef.current) {
       try { URL.revokeObjectURL(workletUrlRef.current); } catch { /* ignore */ }
       workletUrlRef.current = null;
@@ -242,20 +216,12 @@ export function useInterviewAudio() {
     dgPendingSinceRef.current = 0;
   };
 
-  // Returns whether capture actually started — Home.tsx used to fire-and-forget
-  // this and optimistically flip liveActive=true regardless, so a failure here
-  // (getDisplayMedia rejecting, zero audio tracks) left the UI stuck showing
-  // "Listening…" forever with no error, since only this hook's internal
-  // (unrendered) log array recorded what happened.
+  // Returns whether capture actually started: a failure here (getDisplayMedia
+  // rejecting, zero audio tracks) otherwise left the UI on "Listening…" forever.
   const startInterview = async (): Promise<boolean> => {
     if (!isModelReady) { addLog("Cannot start: Deepgram key missing."); return false; }
-    // Root-cause re-entrancy guard, here rather than in the caller: every
-    // button/keyboard shortcut routes through this function, and
-    // isRecordingRef flips synchronously below (before the first await), so a
-    // second call in the same tick can never overwrite wsRef/audioCtxRef/
-    // workletUrlRef/silenceWatchdogRef and orphan a live socket, mic and
-    // blob URL. Report success so a double click doesn't flash a false
-    // "couldn't start" error while the first session is running fine.
+    // Re-entrancy guard here, not in the caller: every button/shortcut routes through
+    // this, and isRecordingRef flips before the first await.
     if (isRecordingRef.current) {
       addLog("Start requested while already recording — ignoring duplicate.");
       return true;
@@ -281,16 +247,14 @@ export function useInterviewAudio() {
 
       const audioTracks = displayStream.getAudioTracks();
       if (!audioTracks.length) {
-        // There is no OS share picker anymore (the app resolves this
-        // automatically via useSystemPicker:false in the main process) — this
-        // used to tell users to check a box that no longer appears on screen.
+        // No OS share picker exists (useSystemPicker:false in main), so don't tell
+        // users to tick a box that never appears.
         throw new Error(
           "No system audio track available. Make sure something is actually set as your Windows default playback device (Settings > Sound)."
         );
       }
 
       const sysStream = new MediaStream(audioTracks);
-      // Fix: store streams separately for reliable cleanup
       streamsRef.current = [sysStream, displayStream];
       addLog(`✔ System audio captured — ${sanitizeText(audioTracks[0].label || "loopback")}`);
       addLog("Tip: keep Zoom/Meet/Teams output on the same Windows default speaker/headset.");
@@ -311,9 +275,8 @@ export function useInterviewAudio() {
           model: "nova-2",
           smart_format: "true",
           encoding: "linear16",
-          // The worklet has already resampled the capture down to this rate
-          // (see DEEPGRAM_SAMPLE_RATE) — declaring the device rate here used to
-          // make us ship 3x the bytes for the same speech.
+          // Declare the worklet's rate, not the device rate: the latter shipped 3x
+          // the bytes for the same speech.
           sample_rate: String(DEEPGRAM_SAMPLE_RATE),
           channels: "1",
           interim_results: "true",
@@ -322,9 +285,8 @@ export function useInterviewAudio() {
           vad_events: "true",
           no_delay: "true",
         };
-        // Omitted entirely unless the user explicitly set one in Settings —
-        // Deepgram defaults to English when this is absent, so leaving it out
-        // keeps today's behavior unchanged for everyone who hasn't opted in.
+        // Omitted unless set in Settings — Deepgram defaults to English when absent,
+        // so behavior is unchanged for anyone who hasn't opted in.
         if (language) paramsObj.language = language;
         const params = new URLSearchParams(paramsObj);
 
@@ -334,9 +296,8 @@ export function useInterviewAudio() {
         );
         wsRef.current = ws;
 
-        // A socket that never finishes the handshake (captive portal,
-        // corporate TLS proxy) would otherwise sit in CONNECTING for the whole
-        // session. Give up on it and let onclose run the backoff/retry path.
+        // Give up on a handshake that never completes (captive portal, corporate TLS
+        // proxy) and let onclose run the backoff/retry path.
         connectTimerRef.current = setTimeout(() => {
           connectTimerRef.current = null;
           if (ws.readyState !== WebSocket.CONNECTING) return;
@@ -384,12 +345,8 @@ export function useInterviewAudio() {
         ws.onclose = (ev) => {
           if (connectTimerRef.current) { clearTimeout(connectTimerRef.current); connectTimerRef.current = null; }
           if (!isMountedRef.current || !isRecordingRef.current) return;
-          // A clean close while still "recording" means the server hung up on
-          // us (or the socket was closed out from under the graph) — not that
-          // the user pressed stop, which flips isRecordingRef first. Returning
-          // early here used to leave isRecording true and the mic hot with a
-          // frozen transcript on screen; the only trace was a log line nothing
-          // renders.
+          // Clean close while still recording means the server hung up, not a user
+          // stop (which flips isRecordingRef first); leaving it would keep the mic hot.
           if (ev.wasClean) {
             const msg = "Deepgram closed the connection. Listening has stopped — press Start to try again.";
             addLog(`[ERROR] ${msg}`);
@@ -428,11 +385,8 @@ export function useInterviewAudio() {
 
       connectWebSocket();
 
-      // If nothing above a near-silent noise floor has come through within
-      // 12s of starting, the loopback capture is very likely tapping a
-      // device the interviewer's audio isn't actually playing through (see
-      // the note on hasHeardAudioRef above) — tell the user instead of
-      // leaving them staring at an empty "Listening…" transcript.
+      // If nothing above the noise floor arrives within 12s, loopback is likely
+      // tapping a device the interviewer's audio isn't playing through — warn.
       silenceWatchdogRef.current = setTimeout(() => {
         if (!isRecordingRef.current || hasHeardAudioRef.current) return;
         const msg = "No system audio detected for 12s. If you're using headphones/a headset, open Windows Sound Settings and make sure it's set as your DEFAULT output device (not just default communication device) — then press Start again.";
@@ -442,9 +396,8 @@ export function useInterviewAudio() {
 
       const source = audioCtx.createMediaStreamSource(sysStream);
       const voiceBoost = audioCtx.createGain();
-      // Was a fixed 2.6 (+8 dB) applied to the raw loopback. On an already-loud
-      // system output that hard-clips, and clipped audio is the most likely
-      // cause of "the transcript is garbled". See SYSTEM_AUDIO_GAIN above.
+      // Was a fixed 2.6 (+8 dB): on already-loud output that hard-clips, the most
+      // likely cause of garbled transcripts. See SYSTEM_AUDIO_GAIN above.
       voiceBoost.gain.value = SYSTEM_AUDIO_GAIN;
       const compressor = audioCtx.createDynamicsCompressor();
       compressor.threshold.value = -42;
@@ -465,9 +418,8 @@ export function useInterviewAudio() {
         if (e.data.type !== "audio") return;
         const buf = e.data.buffer as ArrayBuffer;
 
-        // Cheap silence check for the watchdog above — only runs until the
-        // first real signal is seen, then never again (no per-chunk cost for
-        // the rest of the session).
+        // Cheap silence check for the watchdog: runs only until the first real
+        // signal, then never again (no per-chunk cost for the rest of the session).
         if (!hasHeardAudioRef.current) {
           const samples = new Int16Array(buf);
           for (let i = 0; i < samples.length; i++) {
@@ -479,10 +431,8 @@ export function useInterviewAudio() {
         if (currentWs?.readyState === WebSocket.OPEN) {
           currentWs.send(buf);
         } else if (currentWs?.readyState === WebSocket.CONNECTING) {
-          // Hold a little audio while the handshake finishes — but never more
-          // than 3 s worth, and never audio older than 3 s. Transcribing a
-          // backlog that is already minutes stale is worse than starting
-          // slightly late.
+          // Hold at most 3s of audio while the handshake finishes; transcribing a
+          // minutes-stale backlog is worse than starting slightly late.
           const now = Date.now();
           if (!dgPendingSinceRef.current) dgPendingSinceRef.current = now;
           if (now - dgPendingSinceRef.current > MAX_PENDING_AGE_MS) {
@@ -494,7 +444,6 @@ export function useInterviewAudio() {
             dgPendingRef.current.splice(0, dgPendingRef.current.length - MAX_PENDING_CHUNKS);
           }
         }
-        // Fix: drop buffer if ws is closing/closed — prevents memory buildup
       };
 
       addLog("🎙️ Listening to system audio...");

@@ -13,9 +13,8 @@ export interface AIRequestOptions {
   model: string;
   apiKey: string;
   maxTokens?: number;
-  // Every provider passes this straight into fetch()'s `signal` (or races its
-  // IPC call against it), so a stalled connection during a meeting fails
-  // instead of leaving isStreaming true forever.
+  // Every provider passes this into fetch()'s `signal` (or races its IPC call against it),
+  // so a stalled connection fails instead of leaving isStreaming true forever.
   signal?: AbortSignal;
 }
 
@@ -28,31 +27,20 @@ export interface AIProvider {
 /** Ceiling for a provider that was never handed a signal. Matches Home.tsx's. */
 export const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 
-/**
- * Every provider starts with `defaultSignal(options.signal)` so no code path can
- * reach a real network call without a deadline. Two providers used to ignore
- * `signal` entirely, which is how an unbounded fetch could hang forever.
- */
+/** Every provider starts with `defaultSignal(options.signal)` so no code path can
+ *  reach a real network call without a deadline. */
 export function defaultSignal(signal?: AbortSignal): AbortSignal {
   return signal ?? AbortSignal.timeout(DEFAULT_REQUEST_TIMEOUT_MS);
 }
 
-// ───────────────────────── errors ─────────────────────────
-
-/**
- * - "rate_limit" — the request itself was fine, this provider's quota is gone.
- * - "retryable"  — this provider is busy/down/empty right now (402/503/529/5xx),
- *   another already-configured provider can plausibly answer instead.
- * - "fatal"      — bad key, bad model, bad request. Trying again elsewhere
- *   wastes the user's quota and hides the real problem.
- */
+/** "rate_limit" = this provider's quota is gone; "retryable" = busy/down/empty right now
+ *  (402/503/529/5xx), so another configured provider may answer; "fatal" = bad key, model or request. */
 export type ProviderFailure = "rate_limit" | "retryable" | "fatal";
 
 function classifyStatus(status: number): ProviderFailure {
   if (status === 429) return "rate_limit";
-  // 402 = OpenRouter's "no credits" on a free key; 408 = upstream timeout;
-  // 503 = Gemini/Google overloaded; 529 = Anthropic's overloaded. Every one of
-  // them means "not right now", not "your request was wrong".
+  // 402 = OpenRouter "no credits", 408 = upstream timeout, 503 = Google overloaded,
+  // 529 = Anthropic overloaded: "not right now", not "your request was wrong".
   if (status === 402 || status === 408 || status === 503 || status === 529 || status >= 500) return "retryable";
   return "fatal";
 }
@@ -86,10 +74,8 @@ export function httpError(label: string, response: Response, parsed: unknown, de
   );
 }
 
-/**
- * `response.statusText` is empty over HTTP/2, which every AI vendor uses, so
- * falling back to it alone rendered "Groq API error: " with nothing after it.
- */
+/** `response.statusText` is empty over HTTP/2, which every AI vendor uses, so falling
+ *  back to it alone rendered "Groq API error: " with nothing after it. */
 export function apiErrorDetail(response: Response, parsed: unknown): string {
   const body = (parsed as { error?: { message?: string } | string; message?: string } | null)?.error;
   const raw = typeof body === "string" ? body : body?.message ?? (parsed as { message?: string } | null)?.message;
@@ -97,7 +83,7 @@ export function apiErrorDetail(response: Response, parsed: unknown): string {
   return response.statusText?.trim() || `HTTP ${response.status}`;
 }
 
-/** Empty keys used to be sent as `Authorization: Bearer ` for a guaranteed 401. */
+/** An empty key would be sent as `Authorization: Bearer ` for a guaranteed 401. */
 export function requireApiKey(apiKey: string | undefined, label: string, url: string): string {
   const key = (apiKey ?? "").trim();
   if (!key) throw new ProviderError(`${label} API key missing. Add one in API Setup (${url}).`);
@@ -108,12 +94,8 @@ export function isRateLimitError(err: unknown): boolean {
   return err instanceof ProviderError && err.failure === "rate_limit";
 }
 
-/**
- * Whether streamWithFallback should try the next already-configured provider.
- * A bare TypeError is included because that is what fetch() rejects with for
- * every transport failure (TLS reset, DNS, offline, dropped connection) — one
- * dead socket to a vendor says nothing about the next one.
- */
+/** A bare TypeError counts because that is what fetch() rejects with for every transport
+ *  failure (TLS reset, DNS, offline); one dead socket says nothing about the next. */
 export function isFallbackWorthy(err: unknown): boolean {
   if (err instanceof ProviderError) return err.failure !== "fatal";
   return err instanceof TypeError;
@@ -133,11 +115,8 @@ const sleep = (ms: number, signal?: AbortSignal) =>
     );
   });
 
-/**
- * One retry with jitter for >= 500. Both main-process-proxied providers are
- * vendors that 5xx constantly under load, and neither streams, so a transient
- * blip used to end the whole answer with nothing to fall back on.
- */
+/** One retry with jitter for >= 500. Both proxied providers 5xx constantly under load and
+ *  neither streams, so a transient blip would otherwise end the whole answer. */
 export async function retryOnServerError<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
   try {
     return await fn();
@@ -169,10 +148,8 @@ export function raceSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise
   });
 }
 
-/**
- * Stops a captive portal or TLS-terminating proxy returning `<html>` with a 200
- * from reaching the user as `SyntaxError: Unexpected token '<'`.
- */
+/** Stops a captive portal or TLS-terminating proxy returning `<html>` with a 200 from
+ *  reaching the user as `SyntaxError: Unexpected token '<'`. */
 export function parseJsonBody(raw: string, label: string): unknown {
   try {
     return JSON.parse(raw);
@@ -184,16 +161,8 @@ export function parseJsonBody(raw: string, label: string): unknown {
   }
 }
 
-/**
- * nvidia.ts and anthropic.ts (both proxied through the main process, since
- * neither vendor allows direct browser-origin calls) used to throw the raw,
- * unparsed HTTP response body straight into the user-facing error banner —
- * up to 300 characters of whatever backend JSON/diagnostic text the vendor's
- * gateway happened to emit, unlike every fetch-based provider here which
- * parses `.error.message` out of a clean JSON error body. This extracts the
- * same kind of clean message when possible, falling back to a short generic
- * one instead of ever surfacing raw response text.
- */
+/** Extracts the same clean `.error.message` the fetch-based providers get, instead of
+ *  surfacing up to 300 characters of raw vendor JSON; falls back to a short generic message. */
 export function extractApiErrorMessage(rawBody: string, providerLabel: string, status: number): string {
   try {
     const parsed = JSON.parse(rawBody);
@@ -205,20 +174,8 @@ export function extractApiErrorMessage(rawBody: string, providerLabel: string, s
   return `${providerLabel} API error (status ${status})`;
 }
 
-/**
- * One SSE reader for every provider. Fixes four separate bugs at once:
- *
- * 1. In-band `data:{"error":{...}}` frames were parsed and discarded by every
- *    provider, so a mid-stream failure looked like a finished (but truncated)
- *    answer and still got saved to session history.
- * 2. Only Gemini flushed the trailing partial line, so five of six providers
- *    silently dropped the last chunk — usually the closing ``` of a code fence.
- * 3. `data:` / `[DONE]` were matched as exact literals, so `\r\n` framing left a
- *    trailing `\r` that broke `JSON.parse`, and the no-space `data:{...}` form
- *    was ignored entirely.
- *
- * Yields the parsed frame; each provider pulls its own text out of it.
- */
+/** One SSE reader for every provider: throws in-band `data:{"error":...}` frames instead of
+ *  truncating silently, flushes the trailing partial line, and tolerates `\r\n` / no-space `data:` framing. */
 export async function* readSSE(response: Response): AsyncGenerator<Record<string, any>> {
   if (!response.body) throw new ProviderError("The provider returned a streaming response with no readable body.");
   const reader = response.body.getReader();

@@ -5,13 +5,8 @@ import { motion } from "framer-motion";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 
-// Streaming caret. This used to be a raw <span> spliced into the markdown source,
-// which is the only reason rehype-raw was in the pipeline at all — and with it,
-// any raw HTML a model emitted became live DOM (event handlers, javascript: URLs,
-// the lot) inside a window that runs with a privileged preload. The caret is ours,
-// not the model's, so a sentinel + hast transform keeps the identical output
-// without ever re-enabling raw HTML parsing.
-// U+E000 (private-use area) — a character no model output will ever contain.
+// Streaming caret via a sentinel + hast transform, not raw HTML: rehype-raw made model HTML live in a
+// privileged window. U+E000 is a private-use codepoint no model output contains.
 const CARET_SENTINEL = String.fromCharCode(0xe000);
 const CARET_CLASS = "text-violet-400 animate-pulse ml-1 inline-block font-black";
 

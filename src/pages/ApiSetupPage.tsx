@@ -21,16 +21,8 @@ export interface AIProviderConfig {
   modelLabels: Record<string, string>;
 }
 
-// Explicitly typed as ProviderName[] — without this, `id` widens to plain
-// `string`, which meant `setActiveProv(p.id)` calls below didn't actually
-// type-check against the store's ProviderName union (caught by `tsc`, not by
-// `vite build`, so it silently worked at runtime but wasn't real type safety).
-//
-// `models` and `modelLabels` now come from lib/ai/catalog.ts — the single
-// source of truth. They used to be a hand-maintained copy of each provider's
-// listModels(), and HAD drifted: this picker offered "gemini-3.1-flash-lite"
-// while electron/ipc.ts started every new install on "gemini-3.5-flash", which
-// this picker could not even select.
+// Explicit ProviderName[] so `id` doesn't widen to string and setActiveProv(p.id) still type-checks.
+// `models`/`modelLabels` come from lib/ai/catalog.ts; hand-maintained copies had drifted from electron/ipc.ts.
 export const AI_PROVIDERS: AIProviderConfig[] = [
   {
     id: "groq", label: "Groq", icon: "⚡", badge: "FAST", badgeColor: "rgba(139,92,246,0.15)", badgeBorder: "rgba(139,92,246,0.3)", badgeText: "#a78bfa",
@@ -45,8 +37,7 @@ export const AI_PROVIDERS: AIProviderConfig[] = [
     modelLabels: modelLabels("gemini"),
   },
   {
-    // Counted from the catalog minus "openrouter/auto", which isn't a free
-    // model — it routes to whatever OpenRouter judges best, paid included.
+    // Catalog minus "openrouter/auto", which routes to paid models too.
     id: "openrouter", label: "OpenRouter", icon: "🔀", badge: `${MODEL_CATALOG.openrouter.length - 1} FREE`, badgeColor: "rgba(34,197,94,0.1)", badgeBorder: "rgba(34,197,94,0.28)", badgeText: "#4ade80",
     url: "https://openrouter.ai/keys", ph: "sk-or-…",
     models: modelIds("openrouter"),
@@ -80,16 +71,8 @@ export const AI_PROVIDERS: AIProviderConfig[] = [
 
 export type TestKeyResult = { status: "valid" | "invalid"; message: string };
 
-// Extracted out of ApiSetupPage's handleTestKey so the new Settings-from-
-// HomePage panel can run the exact same real API-key tests (endpoints,
-// headers, timeouts, CORS-proxy routing) without duplicating — and risking
-// drifting from — this logic in a second place.
-//
-// Every Test press also saves the key (encrypted, server-side) to the user's
-// Ghotly AI account — see lib/keySync.ts. That runs in the background AFTER the
-// result is computed, so the result is returned exactly as fast as before; the
-// optional onSynced callback hears how the save went (saved / skipped / failed).
-// Any caller of this function gets the backup for free.
+// Shared by the setup page and the Home settings panel so the key tests don't drift. Each Test also
+// backs up the key via lib/keySync.ts in the background; onSynced reports how that went.
 export async function testApiKey(
   providerId: string,
   apiKey: string,
@@ -106,9 +89,7 @@ export async function testApiKey(
 async function runKeyTest(providerId: string, apiKey: string, selectedModel?: string): Promise<TestKeyResult> {
   const key = apiKey.trim();
   if (!key) return { status: "invalid", message: "Enter an API key first" };
-  // Every default below used to be an inline literal, which is how the picker
-  // and the tests drifted apart four separate times. It comes from the same
-  // catalog the picker renders and the provider actually calls.
+  // Defaults come from the same catalog the picker renders and the provider calls.
   const catalogDefault = (p: ProviderName) => defaultModel(p);
 
   try {
@@ -163,19 +144,15 @@ async function runKeyTest(providerId: string, apiKey: string, selectedModel?: st
         : { status: "invalid", message: `Invalid Key (HTTP ${res.status})` };
     }
     if (providerId === "nvidia") {
-      // NVIDIA's API blocks direct browser-origin requests (CORS) — goes
-      // through the same Electron main-process proxy the real provider uses.
+      // NVIDIA blocks browser-origin requests (CORS), so go through the Electron main-process proxy.
       const result = await window.ghostly.nvidiaTestKey(key);
       return result.ok
         ? { status: "valid", message: "NVIDIA Key Valid! 🟢" }
         : { status: "invalid", message: `Invalid Key (HTTP ${result.status})` };
     }
     if (providerId === "openai") {
-      // Sent `max_tokens: 1`, which the gpt-5 reasoning family rejects outright
-      // ("Unsupported parameter: 'max_tokens'... Use 'max_completion_tokens'") —
-      // so pressing Test with a perfectly valid OpenAI key reported
-      // "Invalid Key (HTTP 400)". openAiChat is the exact same helper (and the
-      // same one-shot parameter correction) the real provider calls with.
+      // gpt-5 reasoning models reject max_tokens: 1 with HTTP 400; openAiChat sends
+      // max_completion_tokens like the real provider, so a valid key still tests valid.
       await openAiChat({
         model: selectedModel || catalogDefault("openai"),
         apiKey: key,
@@ -186,9 +163,8 @@ async function runKeyTest(providerId: string, apiKey: string, selectedModel?: st
       return { status: "valid", message: "OpenAI Key Valid! 🟣" };
     }
     if (providerId === "anthropic") {
-      // Anthropic blocks direct browser calls (no CORS) — same main-process proxy.
-      // No temperature/top_p: Anthropic deprecated both on Claude 4.7+ and 400s
-      // on a non-default value, which is every model in the catalog.
+      // Anthropic blocks browser calls (no CORS), so same main-process proxy. No temperature/top_p:
+      // both are deprecated on Claude 4.7+ and 400 on a non-default value, which is every catalog model.
       const result = await window.ghostly.anthropicApiCall(key, {
         model: selectedModel || catalogDefault("anthropic"),
         max_tokens: 1,
@@ -250,9 +226,8 @@ export const ApiSetupPage: React.FC = () => {
   const [expanded, setExpanded]     = useState<string | null>(null);
   const [deepFocused, setDeepFocused] = useState(false);
   const [testStatus, setTestStatus] = useState<Record<string, { status: "idle" | "testing" | "valid" | "invalid"; message?: string }>>({});
-  // How the background "save to your account" went for each provider's latest Test, shown next to its
-  // result. testSeq numbers the Tests per provider so a late answer to an older Test (or to a key
-  // that has since been edited) can't overwrite what the indicator shows now.
+  // Save status per provider, shown next to its Test result. testSeq stops a late answer to an
+  // older Test (or a key since edited) from overwriting the current indicator.
   const [syncBadge, setSyncBadge] = useState<Record<string, KeySyncBadge | undefined>>({});
   const testSeq = useRef<Record<string, number>>({});
   const invalidateSync = (providerId: string) => {
@@ -334,7 +309,6 @@ export const ApiSetupPage: React.FC = () => {
         }}
         onMouseEnter={() => window.ghostly.enableMouse()}
       >
-        {/* ── Header ── */}
         <div className="flex items-center justify-between px-3.5 py-2.5" style={{ WebkitAppRegion: "drag", borderBottom: `1px solid ${BORDER}` } as React.CSSProperties}>
           <div className="flex items-center gap-2">
             <span style={{ fontSize: "15px" }}>🔑</span>
@@ -358,7 +332,6 @@ export const ApiSetupPage: React.FC = () => {
           </button>
         </div>
 
-        {/* ── Progress checklist ── */}
         <div className="px-4 pt-3.5 pb-3">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 flex-1">
@@ -383,7 +356,7 @@ export const ApiSetupPage: React.FC = () => {
 
         <div className="mx-4 h-px" style={{ background: BORDER }} />
 
-        {/* Disclosure: pressing Test also saves the key to the user's account (lib/keySync.ts). */}
+        {/* Pressing Test also saves the key to the account (lib/keySync.ts). */}
         <p className="px-4 pt-2 text-[8.5px] font-medium leading-snug" style={{ color: SUBTLE, userSelect: "text" }}>
           🔒 When you press Test, the key is saved (encrypted) to your Ghotly AI account. Email{" "}
           <button type="button" onClick={() => window.ghostly.openExternal("mailto:support@ghotlyai.in")} className="font-bold underline" style={{ color: INK }}>support@ghotlyai.in</button>{" "}
@@ -393,7 +366,6 @@ export const ApiSetupPage: React.FC = () => {
         {/* 55vh minus the disclosure line above, so the card keeps its height */}
         <div className="px-3.5 pt-3 pb-2 flex flex-col gap-3 max-h-[calc(55vh-32px)] overflow-y-auto" style={{ scrollbarWidth: "none" }}>
 
-          {/* ── Deepgram ── */}
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between">
               <label className="text-[8px] font-black uppercase tracking-[0.12em] flex items-center gap-1.5" style={{ color: SUBTLE }}>
@@ -444,7 +416,6 @@ export const ApiSetupPage: React.FC = () => {
 
           <div className="h-px" style={{ background: BORDER }} />
 
-          {/* ── AI Providers ── */}
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
               <label className="text-[8px] font-black uppercase tracking-[0.12em]" style={{ color: SUBTLE }}>🤖 AI Provider</label>
@@ -533,7 +504,6 @@ export const ApiSetupPage: React.FC = () => {
           </div>
         </div>
 
-        {/* ── Footer ── */}
         <div className="px-3.5 pb-3.5 pt-2.5" style={{ borderTop: `1px solid ${BORDER}` }}>
           <motion.button
             whileHover={canProceed ? { scale: 1.015 } : {}}

@@ -1,18 +1,5 @@
-// Pure accelerator-string validation. Deliberately has NO Electron import so it
-// can be unit-tested without booting the app (electron/accelerator.test.ts).
-//
-// Why this module exists: Electron 28 converts the string in a gin converter
-// (shell/common/gin_converters/accelerator_converter.cc) before
-// globalShortcut.register() ever runs. When that conversion fails, gin raises a
-// TypeError — register() THROWS. It only ever *returns false* when another
-// already-running app owns the same combo. The rest of the hotkey code was
-// written on the assumption that false was the only failure mode, so one
-// malformed string could take out every registered shortcut (updateHotkeys) or
-// abort app startup outright (registerHotkeys).
-//
-// The rules below mirror shell/common/keyboard_util.cc + the
-// accelerator_util::StringToAccelerator loop, so "valid here" means "Electron
-// will accept it".
+// Electron-free accelerator validation (unit-tested in accelerator.test.ts).
+// Rules mirror Electron's parser; a malformed string makes register() THROW, not return false.
 
 // Tokens that resolve to a modifier (KeyboardCodeFromKeyIdentifier).
 const MODIFIER_TOKENS = new Set([
@@ -32,8 +19,7 @@ const NAMED_KEY_TOKENS = new Set([
   "volumedown", "volumemute", "volumeup",
 ]);
 
-// Every printable ASCII character maps to a key code (KeyboardCodeFromCharCode
-// covers 0x20-0x7E), plus the control chars it accepts for backspace/tab/
+// Printable ASCII 0x20-0x7E plus the control chars it accepts for backspace/tab/
 // return/escape/delete.
 const SINGLE_CHAR_KEY = /^[ -~\x08\x09\x0d\x1b\x7f]$/;
 const FUNCTION_KEY = /^f([1-9]|1[0-9]|2[0-4])$/;
@@ -47,24 +33,15 @@ function tokenRole(token: string): "modifier" | "key" | null {
   return null;
 }
 
-/**
- * True when Electron's accelerator parser would accept this string instead of
- * throwing out of globalShortcut.register().
- *
- * Deliberately stricter than Electron in two places, both in the safe
- * direction: every token must be one it knows (Electron only fails when the
- * *last* non-modifier token is unknown, so `"CommandOrControl+Dead+E"` would
- * silently register as just Ctrl+E), and at least one modifier is required (a
- * bare `"E"` parses fine and would then hijack that key in every other app).
- */
+/** True when Electron's parser accepts this string. Deliberately stricter in two
+ *  safe directions: unknown tokens fail ("X+Dead+E" parses as Ctrl+E) and a modifier is required. */
 export function isValidAccelerator(accelerator: unknown): accelerator is string {
   if (typeof accelerator !== "string" || accelerator.length === 0) return false;
   // StringToAccelerator() rejects any non-ASCII string outright.
   if (!ASCII.test(accelerator)) return false;
 
-  // Same splitting Electron does: split on "+", trim each token, drop empties.
-  // This is what turns "CommandOrControl+ " into "CommandOrControl" (no key →
-  // conversion failure) and "CommandOrControl+Shift++" into two modifiers.
+  // Same splitting Electron does: on "+", trimmed, empties dropped. This turns
+  // "CommandOrControl+ " into "CommandOrControl" (no key → conversion failure).
   const tokens = accelerator.split("+").map((t) => t.trim()).filter(Boolean);
   if (tokens.length === 0) return false;
 

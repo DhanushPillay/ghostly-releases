@@ -24,7 +24,6 @@ export class NvidiaProvider implements AIProvider {
     const { prompt, messages = [], model, apiKey, base64Image, maxTokens = 4096 } = options;
     const signal = defaultSignal(options.signal);
 
-    // Clean model name
     const cleanModel = model.trim().replace(/\s+/g, "");
 
     // An empty key would otherwise spend a guaranteed 401 round trip in the proxy.

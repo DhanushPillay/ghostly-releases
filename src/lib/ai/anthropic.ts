@@ -25,7 +25,6 @@ export class AnthropicProvider implements AIProvider {
     // An empty key would otherwise spend a guaranteed 401 round trip in the proxy.
     const anthropicKey = requireApiKey(apiKey, "Anthropic", "https://console.anthropic.com/settings/keys");
 
-    // CRITICAL FIX: Clean model name - remove all whitespace
     model = model.trim().replace(/\s+/g, "");
 
     const imageData = base64Image?.includes(",")
@@ -50,10 +49,8 @@ export class AnthropicProvider implements AIProvider {
     const body = {
       model,
       max_tokens: maxTokens,
-      // No temperature/top_p/top_k: Anthropic deprecated all three on Claude 4.7+
-      // and returns 400 for any non-default value
-      // (platform.claude.com/docs/en/about-claude/model-deprecations), which is
-      // every model this app offers. Behaviour is steered by the prompt instead.
+      // No temperature/top_p/top_k: deprecated on Claude 4.7+ and a 400 for any
+      // non-default value, which is every model this app offers.
       stream: false,
       messages: apiMessages,
     };
@@ -66,9 +63,8 @@ export class AnthropicProvider implements AIProvider {
       if (!result.ok) {
         const message = extractApiErrorMessage(result.data, "Anthropic", result.status);
         if (result.status === 429) throw rateLimitError(message);
-        // 529 (Anthropic's "overloaded") and 5xx are classified as retryable by
-        // ProviderError, so the fallback chain in lib/ai/index.ts actually fires
-        // for the two most common real-world Anthropic failures.
+        // 529 ("overloaded") and 5xx classify as retryable, so the fallback chain
+        // in lib/ai/index.ts fires for both common Anthropic failures.
         throw new ProviderError(message, result.status);
       }
       return result;

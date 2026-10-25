@@ -2,10 +2,8 @@ import React, { useCallback, useEffect, useRef, useState, Suspense } from "react
 import { motion, AnimatePresence } from "framer-motion";
 import { useStore } from "./store/useStore";
 import { resetKeySyncCache } from "./lib/keySync";
-// Only ApiSetupPage's provider table is needed eagerly (it seeds the retired-model
-// fix on load). The heavy pages are split: the login screen used to download the
-// whole interview engine, react-syntax-highlighter's Prism grammars, the resume
-// parser (pdfjs/mammoth) and the markdown pipeline before anyone had signed in.
+// Only ApiSetupPage's provider table is eager (it seeds the retired-model fix on
+// load); heavy pages stay lazy so the login screen doesn't pull the whole engine.
 import { AI_PROVIDERS, ApiSetupPage } from "./pages/ApiSetupPage";
 import { UpdateAnimation } from "./components/UpdateAnimation";
 import { SplashScreen } from "./components/SplashScreen";
@@ -22,10 +20,8 @@ const SETUP_STEPS = [
   { key: "audio-setup",     label: "Audio",    icon: "🎙️" },
 ] as const;
 
-// ── Step indicator ────────────────────────────────────────────────────────────
-// Declared at module scope on purpose: while it lived inside App's body it got a
-// new function identity on every render, so React saw a different component type
-// and unmounted/remounted its whole subtree — on every streamed chunk.
+// Module scope on purpose: inside App's body it got a new function identity each
+// render, remounting its whole subtree on every streamed chunk.
 const StepIndicator: React.FC<{ appScreen: string }> = ({ appScreen }) => {
   const currentIdx = SETUP_STEPS.findIndex(s => s.key === appScreen);
   return (
@@ -96,13 +92,8 @@ const handleBlockedAuth = async () => {
   useStore.getState().setAppScreen("login");
 };
 
-/**
- * Completes a login. Idempotent per token: the IPC listener and the pending-token
- * buffer can both deliver the *same* token (the POST can land between the listener
- * being attached and the buffer being drained), and running this twice meant two
- * /subscription fetches, two saveUser, two saveAds — a bad login writing the ads
- * file twice.
- */
+// Idempotent per token: the IPC listener and the pending-token buffer can both
+// deliver the same token; running twice meant duplicate fetches and saves.
 const authTokenInFlight = new Set<string>();
 
 const handleAuthToken = async ({ token, user }: { token: string; user: any }) => {
@@ -113,20 +104,14 @@ const handleAuthToken = async ({ token, user }: { token: string; user: any }) =>
   try {
     const res = await fetch(`${import.meta.env.VITE_API_URL}/subscription`, {
       headers: { Authorization: `Bearer ${token}` },
-      // OAuth had already succeeded by the time this runs — an unbounded
-      // fetch here used to mean a slow/unreachable backend left the user
-      // stuck on "Waiting for browser login..." forever with no real
-      // diagnostic, even though login itself was fine.
+      // Bounded: a slow/unreachable backend otherwise left the user stuck on
+      // "Waiting for browser login..." even though OAuth had already succeeded.
       signal: AbortSignal.timeout(10000),
     });
     if (res.status === 403) {
       await handleBlockedAuth();
-      // Electron's alert() opens a native OS dialog — unlike the app's own
-      // window, that dialog is NOT covered by stealth (WDA_EXCLUDEFROMCAPTURE
-      // only applies to the BrowserWindow it's set on), so this could
-      // genuinely show up in a live screen-share, and it blocks the whole
-      // renderer thread until dismissed. handleBlockedAuth() already routes
-      // back to LoginPage, so reuse its own error banner instead.
+      // Not alert(): the native OS dialog isn't covered by stealth
+      // (WDA_EXCLUDEFROMCAPTURE) and can appear in a screen-share. LoginPage shows this.
       setLoginError("Your Ghotly AI account has been blocked. Please contact support if this is a mistake.");
       return;
     }
@@ -177,9 +162,8 @@ const SHORTCUT_LABELS: Record<string, string> = {
 };
 
 const App: React.FC = () => {
-  // Per-field selectors, not useStore(): subscribing to the whole store made App
-  // re-render on every mutation — including appendToSolution, ~20x/second while an
-  // answer streams — which re-rendered the entire page tree on every chunk.
+  // Per-field selectors, not useStore(): the whole store re-rendered the entire
+  // page tree on every mutation, ~20x/second while an answer streams.
   const appScreen   = useStore((s) => s.appScreen);
   const user        = useStore((s) => s.user);
   const loginError  = useStore((s) => s.loginError);
@@ -192,12 +176,8 @@ const App: React.FC = () => {
   const [showSplash, setShowSplash] = React.useState(true);
   const [appReady, setAppReady] = React.useState(false);
   const [hotkeyConflict, setHotkeyConflict] = React.useState<string[] | null>(null);
-  // loginError/setLoginError now live in the Zustand store (see useStore.ts)
-  // instead of local state — surfaced to LoginPage to distinguish a real
-  // failure (server error, auth server down, timeout, blocked account) from
-  // "still waiting for the browser." Shared via the store so HomePage.tsx's
-  // own forced-logout path can set it too, instead of falling back to a
-  // blocking native alert().
+  // loginError lives in the store (not local state) so HomePage's forced-logout
+  // path can set it too, instead of falling back to a blocking native alert().
 
   // Every setTimeout here is tracked so unmount can't leave one pending.
   const timersRef = useRef<number[]>([]);
@@ -236,13 +216,8 @@ const App: React.FC = () => {
           window.ghostly.getAds(),
         ]);
         if (savedSettings) {
-          // No VITE_*_API_KEY fallback here any more, and none in useStore's
-          // defaults either: Vite inlines those into the renderer bundle, so a
-          // shipped build carried the maintainer's keys to every user — and the
-          // merged value then looked like the user's own saved key, so pressing
-          // "Test" uploaded that build-time key to the backend against whatever
-          // end-user account happened to be signed in. Say it loudly instead of
-          // shipping it quietly.
+          // No VITE_*_API_KEY fallback: Vite inlines those into the bundle, shipping
+          // the maintainer's keys to every user (and "Test" uploads them). Warn loudly.
           const leakedKeys = ["VITE_GEMINI_API_KEY", "VITE_GROQ_API_KEY", "VITE_OPENAI_API_KEY", "VITE_ANTHROPIC_API_KEY", "VITE_OPENROUTER_API_KEY", "VITE_DEEPGRAM_API_KEY"]
             .filter((k) => !!(import.meta.env as Record<string, string>)[k]);
           if (leakedKeys.length) {
@@ -251,12 +226,8 @@ const App: React.FC = () => {
               "They ship inside the app to every user and are now ignored. Remove them from the build environment."
             );
           }
-          // A provider can retire a model after a user already saved it as their active choice
-          // (e.g. NVIDIA's mixtral-8x7b-instruct-v0.1 was pulled from their catalog entirely) —
-          // every call then fails with that provider's own "model not found / end of life" error,
-          // with no in-app way to notice short of reopening Settings and reselecting one by hand.
-          // Falls back to that provider's current first-listed model, same safe default already
-          // used when ApiSetupPage/HomeSettingsPanel can't find the saved model in the live list.
+          // A provider can retire a saved model, failing every call with "model not
+          // found"; fall back to that provider's current first-listed model.
           const merged = { ...savedSettings };
           const activeProviderCfg = AI_PROVIDERS.find((p) => p.id === merged.activeProvider);
           if (activeProviderCfg && !activeProviderCfg.models.includes(merged.activeModel)) {
@@ -269,13 +240,8 @@ const App: React.FC = () => {
         if (savedUser) useStore.getState().setUser(savedUser);
         if (savedAds) useStore.getState().setAds(savedAds);
       } catch (err) {
-        // Used to assume any failure here meant "first run" — a genuinely
-        // corrupted/unreadable electron-store file (e.g. an interrupted write
-        // during a crash) hits this exact path too, silently dropping a
-        // returning user's settings/history/login with zero indication their
-        // data failed to load rather than never having existed. Still
-        // proceeds with defaults either way (that's the only reasonable
-        // recovery), but now at least it's not silent.
+        // Also covers a corrupted store file, not just first run: defaults still
+        // load, but log it instead of silently dropping a returning user's data.
         console.error("[Ghostly] Failed to load saved app data:", err);
       }
       setAppReady(true);
@@ -291,14 +257,8 @@ const App: React.FC = () => {
   }, [appScreen]);
 
   useEffect(() => {
-    // Listener FIRST, buffer second. Draining the buffer first left a window where
-    // a token that POSTed right then was handled twice: once as an event, once
-    // from the already-resolved pending buffer — two /subscription fetches, two
-    // saveUser, two saveAds, two setAppScreen("home"). (handleAuthToken also
-    // de-dupes per token, so either order can't double-write.)
-    // Draining also still covers the case where Google OAuth (completed in the
-    // system browser, via the website's AuthCallback page) posts the token to this
-    // app's local auth server before this listener has even mounted.
+    // Listener before buffer: draining first let a token POSTing during setup be handled twice (two
+    // subscription/save fetches); handleAuthToken also de-dupes. Draining still covers pre-mount tokens.
     const offAuth = window.ghostly.onAuthToken(handleAuthToken);
     window.ghostly.getPendingAuthToken()
       .then((pending) => { if (pending) handleAuthToken(pending); })
@@ -307,16 +267,8 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    // The ghostly:// custom-protocol handoff (second-instance / macOS
-    // open-url) was fully wired in the main process but had no renderer
-    // listener at all — if that path were ever exercised instead of the
-    // localhost:7842 POST the app actually relies on, the event vanished
-    // silently and login would sit on "Waiting..." until its own timeout.
-    // No producer currently encodes an auth payload into this URL, so the
-    // safe thing to do here (without inventing an unverified format) is
-    // re-check the same pending-auth-token buffer the POST flow already
-    // uses — if a token did land around the same time, this picks it up
-    // instead of leaving the deep link a complete dead end.
+    // ghostly:// deep links had no renderer listener, so login could wait forever if that path were used.
+    // No producer sends an auth payload today, so re-check the pending-token buffer instead of inventing one.
     const offDeepLink = window.ghostly.onDeepLink((url) => {
       console.warn("[Ghostly] Received deep link (unexpected — no producer sends this today):", url);
       window.ghostly.getPendingAuthToken()
@@ -382,15 +334,13 @@ const App: React.FC = () => {
       .catch(() => {});
   }, [appReady, user?.idToken]);
 
-  // Periodic heartbeat every 60s to track user screen time and active status
   useEffect(() => {
     if (!user?.idToken) return;
     const appVersion = window.ghostly?.getVersion ? window.ghostly.getVersion() : "v3.4.0";
     const startedAt = Date.now();
 
     const sendHeartbeat = () => {
-      // Real elapsed time, not a hardcoded 60: a five-second session used to
-      // report a full minute of usage every beat.
+      // Real elapsed time, not a hardcoded 60: short sessions reported a full minute.
       const durationSeconds = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
       fetch(`${import.meta.env.VITE_API_URL}/heartbeat`, {
         method: "POST",
@@ -437,7 +387,6 @@ const App: React.FC = () => {
           }}
           onMouseEnter={() => window.ghostly.enableMouse()}
         >
-          {/* Animated Icon Container */}
           <div className="relative shrink-0">
             <motion.div
               animate={{ rotate: 360 }}
@@ -466,7 +415,6 @@ const App: React.FC = () => {
             </div>
           </div>
 
-          {/* Text & Progress Info */}
           <div className="flex-1 min-w-0 pr-1">
             {updateState === "available" && (
               <>
@@ -523,7 +471,6 @@ const App: React.FC = () => {
             )}
           </div>
 
-          {/* Action Buttons */}
           <div className="flex items-center gap-2 shrink-0">
             {updateState === "available" && (
               <motion.button

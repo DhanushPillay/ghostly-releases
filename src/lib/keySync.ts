@@ -1,19 +1,7 @@
 import { useStore } from "../store/useStore";
 
-// Account backup of API keys.
-//
-// When a user presses "Test" on an API key (Settings, or the setup wizard), the key and the test
-// result can also be saved — encrypted on the server — to their Ghotly AI account:
-//
-//   PUT {VITE_API_URL}/api-keys   Authorization: Bearer <Google idToken>
-//
-// This is strictly best-effort and runs in the background. It never delays or changes the Test
-// result, never throws, and never logs a key: the only things that may reach the console are the
-// provider id and an HTTP status.
-//
-// Nothing is sent at all unless the user has explicitly turned key backup ON
-// (settings.keySyncEnabled, default OFF). This app's whole pitch is "bring your own key", so
-// uploading one is never something a user should get as a side effect of pressing "Test".
+// Best-effort backup of tested API keys to the Ghotly account (PUT /api-keys). Runs only when the
+// user opted in (keySyncEnabled, default off); never delays the Test result, throws, or logs a key.
 
 export const KEY_SYNC_PROVIDERS = ["groq", "gemini", "openrouter", "nvidia", "openai", "anthropic", "grok", "deepgram"] as const;
 
@@ -29,11 +17,8 @@ export interface KeySyncInput {
 
 export interface KeySyncResult {
   state: "saved" | "skipped" | "failed";
-  /**
-   * skipped: not-opted-in | no-user | empty-key | bad-key-format | bad-status | unsupported-provider | no-api-url | insecure-api-url | recently-saved
-   * failed:  auth (401) | blocked (403) | rejected (400) | not-found (404) | rate-limited (429) | server (5xx)
-   *          | network | timeout | bad-response | http-<status> | unexpected
-   */
+  /** skipped: not-opted-in | no-user | empty-key | bad-key-format | bad-status | unsupported-provider | no-api-url | insecure-api-url | recently-saved
+   *  failed: auth (401) | blocked (403) | rejected (400) | not-found (404) | rate-limited (429) | server (5xx) | network | timeout | bad-response | http-<status> | unexpected */
   reason?: string;
   /** Last four characters of the key — the only part of it that is ever echoed anywhere. */
   last4?: string;
@@ -54,11 +39,9 @@ const MESSAGE_MAX = 120;
 // Anything else is a paste accident, so it is not sent at all.
 const KEY_FORMAT = /^[\x21-\x7e]{8,512}$/;
 
-// ── In-memory only. Nothing here is ever persisted or logged. ───────────────────────────────────
-// What was last saved successfully per (user, provider): enough to tell "same key, same result,
-// pressed Test again" from a real change, without keeping the key itself around.
+// In-memory only, never persisted or logged: what was last saved per (user, provider), enough to tell
+// "same key, same result" from a real change without keeping the key. In-flight saves share one request.
 const recentlySaved = new Map<string, { fingerprint: string; status: string; at: number }>();
-// Identical saves that are still in flight share one request.
 const inFlight = new Map<string, Promise<KeySyncResult>>();
 
 /** Forgets what was synced (used by tests; also handy after logout). */
@@ -256,12 +239,8 @@ async function run(input: KeySyncInput, opts: KeySyncOptions): Promise<KeySyncRe
   }
 }
 
-/**
- * Saves a tested key to the signed-in user's account. Resolves — never rejects — with what happened:
- *  - "saved":   the server confirmed the save
- *  - "skipped": nothing was sent (not signed in, empty / malformed key, nothing changed since the last save…)
- *  - "failed":  it could not be saved right now (the next Test tries again)
- */
+/** Saves a tested key to the signed-in user's account; resolves, never rejects. "saved" = server confirmed,
+ *  "skipped" = nothing sent, "failed" = retry on the next Test. */
 export async function syncApiKey(input: KeySyncInput, opts: KeySyncOptions = {}): Promise<KeySyncResult> {
   try {
     return await run(input, opts);
@@ -270,10 +249,8 @@ export async function syncApiKey(input: KeySyncInput, opts: KeySyncOptions = {})
   }
 }
 
-// ── Viewing / deleting what was stored ───────────────────────────────────────
-// A consent switch that can't be undone from the app isn't consent. Both call the
-// same /api-keys collection the PUT writes to: GET lists the provider + last4 the
-// server holds (never the key itself), DELETE removes them.
+// Consent must be reversible: GET lists provider + last4 the server holds, DELETE removes them,
+// both on the same /api-keys collection the PUT writes to.
 
 export interface StoredKeySummary {
   provider: string;
@@ -337,8 +314,6 @@ export async function deleteStoredApiKeys(): Promise<{ ok: boolean; reason?: str
     return { ok: false, reason: err instanceof Error ? err.name : "unexpected" };
   }
 }
-
-// ── What the UI shows next to the Test result ───────────────────────────────────────────────────
 
 export interface KeySyncBadge {
   kind: "saved" | "failed";
