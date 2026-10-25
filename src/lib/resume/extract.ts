@@ -504,9 +504,32 @@ function htmlToText(html: string): string {
   return lines.join("\n");
 }
 
+// Reads only the zip central directory, which records each entry's uncompressed
+// size. A 10 MB .docx can inflate to gigabytes, and both mammoth and JSZip would
+// do it without complaint.
+async function assertZipWithinBudget(buf: ArrayBuffer): Promise<void> {
+  const JSZip = (await import("jszip")).default;
+  const zip = await JSZip.loadAsync(buf).catch(() => null);
+  if (!zip) return; // Not a valid zip; mammoth reports that with a clearer message.
+  const entries = Object.values(zip.files) as unknown as {
+    _data?: { uncompressedSize?: number };
+  }[];
+  let total = 0;
+  for (const entry of entries) {
+    const size = entry._data?.uncompressedSize ?? 0;
+    if (size > MAX_DOCX_ENTRY_BYTES || (total += size) > MAX_DOCX_TOTAL_BYTES) {
+      throw new ResumeError(
+        "too_large",
+        "That document expands to far more data than a resume should. Save it as a PDF and upload that.",
+      );
+    }
+  }
+}
+
 async function extractDocx(buf: ArrayBuffer, signal: AbortSignal): Promise<ExtractedResume> {
   const mammoth = (await import("mammoth/mammoth.browser.min.js")).default;
   throwIfAborted(signal);
+  await assertZipWithinBudget(buf);
   let body = "";
   try {
     // Preferred: the HTML view (keeps tables/lists structured). Images are dropped (only their base64 would be bloat).

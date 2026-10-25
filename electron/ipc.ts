@@ -3,7 +3,6 @@ import { captureFullScreen } from "./capture";
 import { updateHotkeys, DEFAULT_SHORTCUTS, type ShortcutBindings } from "./hotkeys";
 import Store from "electron-store";
 import https from "https";
-import http from "http";
 
 const store = new Store({
   name: "ghostly-data",

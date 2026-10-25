@@ -49,10 +49,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBindings = {
 const ACTIONS = Object.keys(DEFAULT_SHORTCUTS) as ShortcutAction[];
 
 // Ctrl+Arrow is caret movement in every JetBrains IDE and line-move in VS Code,
-// Ctrl+Left/Right is "jump to edge of data region" in Excel/Word. Kept (the
-// window genuinely has to be movable while hidden) but no longer registered
-// silently — see registerMoveKeys.
-const MOVE_ACCELERATORS = ["Up", "Down", "Left", "Right"];
+// but the window must stay movable while hidden. See registerMoveKeys.
 
 // Kept working unconditionally (not remappable, not shown in Settings) so
 // anyone already used to them keeps working, whatever the primary combo is set
